@@ -81,6 +81,28 @@ Situaciones posibles: `ganada documentada`, `ganada solo con propuesta`, `ganada
 `perdida/dormida con propuesta`, `perdida/dormida sin documentación`, `en curso con/sin documentación`,
 `sin negocio · con proyecto/con propuesta/vacía`.
 
+## 5. Fichas con Haiku (fases 2 y 3) · `fichas.py`
+Añade al servicio `ANTHROPIC_API_KEY` (una clave propia, p. ej. `oportunidades`, con límite de gasto) y redespliega.
+Usa la Batch API desde el servidor: **no gasta nada de Claude Team**.
+```bash
+python fichas.py seleccionar --piloto   # 5 proyectos ganados + ~36 propuestas variadas (fijo, reproducible)
+setsid nohup python fichas.py piloto --si > /app/datos/fichas/log.txt 2>&1 < /dev/null &
+tail -f /app/datos/fichas/log.txt
+```
+`piloto` hace, esperando a que acabe cada lote:
+1. **propuestas**: última versión de dossier, presupuesto y pliegos → ficha "qué se presentó".
+2. **mapas**: solo el árbol de carpetas y nombres de cada proyecto ganado → secciones y hasta 15 documentos clave.
+   Una carpeta con miles de inscripciones o fotos queda descrita en una línea, sin leerla.
+3. **proyectos**: lee los documentos clave → ficha del proyecto (recorrido, asistencia, resultados, permisos…).
+4. **indice**: `fichas/indice_oportunidades.json` (para el buscador) y `fichas/revision.csv` (para revisar a mano,
+   con columnas `revision_ok` y `notas_revision`), descargables en `https://<dominio>/fichas/…`.
+
+Sin `--si` enseña el coste estimado y pide confirmación en cada fase. Si se corta: `python fichas.py estado` y
+`python fichas.py seguir <fase>`; relanzar una fase solo envía lo que falta (`--forzar` para rehacer).
+El texto que extrae Box se guarda en `fichas/textos/` y no se vuelve a pedir.
+Los archivos de datos personales nunca se envían a la IA (ni su nombre).
+Para todo el archivo, cuando el piloto esté revisado: `python fichas.py seleccionar --todas` y las mismas fases.
+
 ## Sensibilidad y permisos
 Cada archivo lleva una sensibilidad:
 - **general**: dossier, diseños, fotos, planos, secretaría técnica (SecTec: permisos, rutas, convocatorias), otra documentación…

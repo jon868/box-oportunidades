@@ -21,6 +21,8 @@ TIPOS = {"resumen.txt": "text/plain; charset=utf-8",
          "huecos.csv": "text/csv; charset=utf-8",
          "negocios_sin_carpeta.csv": "text/csv; charset=utf-8",
          "inventario.json": "application/json; charset=utf-8",
+         "revision.csv": "text/csv; charset=utf-8",
+         "indice_oportunidades.json": "application/json; charset=utf-8",
          "log.txt": "text/plain; charset=utf-8"}
 
 
