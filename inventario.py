@@ -649,7 +649,8 @@ def _csv(p, filas):
 def _resumen(filas, sin_carpeta, hs, bx):
     sit = Counter(f["situacion"] for f in filas)
     cruce = Counter(f["cruce"] or "sin negocio" for f in filas)
-    pais = Counter(f["pais"] for f in filas if not f["situacion"].endswith("vacía"))
+    pais = Counter(f["pais"] for f in filas
+                   if f["archivos_propuesta"] + f["archivos_proyecto"] + f["archivos_fuera_plantilla"])
     fuera = Counter(s["estado_carpeta"].split(" (")[0] for s in sin_carpeta)
     fuera_g = Counter(s["estado_carpeta"].split(" (")[0] for s in sin_carpeta if s["grupo"] == "ganada")
     tot_arch = sum(o.get("n_archivos", 0) for o in bx["oportunidades"])
@@ -676,6 +677,88 @@ def _resumen(filas, sin_carpeta, hs, bx):
     RESUMEN.write_text("\n".join(L) + "\n", "utf-8")
 
 
+# ---------------------------------------------------------------- desglose (para presupuestar las fases 2 y 3)
+LEGIBLES = ("documento", "hoja de cálculo", "presentación")
+CAT_PROPUESTA = {"dossier", "presupuesto", "pliegos"}
+
+
+def cmd_desglose(_args):
+    inv = leer_json(INV_JSON)
+    bx = leer_json(BOX_JSON)
+    if not inv or not bx:
+        sys.exit("Faltan datos: ejecuta antes 'box' y 'cruzar'.")
+    sit = {f["carpeta_id"]: f["situacion"] for f in inv["oportunidades"]}
+    anio = {f["carpeta_id"]: f.get("anio") for f in inv["oportunidades"]}
+    docs_cat = Counter()           # (parte, categoría) → documentos legibles
+    mb_cat = Counter()
+    ext_otro = Counter()
+    ext_doc = Counter()
+    prop_ops = Counter()           # situación → oportunidades con dossier/presupuesto/pliegos legibles
+    prop_docs = Counter()          # situación → nº de esos documentos
+    proy_docs = Counter()          # documentos legibles de proyecto en ganadas
+    proy_ops = 0
+    grandes = []                   # carpetas con muchos archivos de un mismo directorio
+    for o in bx["oportunidades"]:
+        p = DIR_CARPETAS / f"{o['id']}.json"
+        if not p.exists():
+            continue
+        archivos = json.loads(p.read_text("utf-8"))
+        s_ = sit.get(o["id"], "")
+        n_prop = 0
+        n_proy = 0
+        por_dir = Counter()
+        for a in archivos:
+            por_dir[a["ruta"]] += 1
+            if a["tipo"] == "otro":
+                ext_otro[a["ext"] or "(sin extensión)"] += 1
+            if a["tipo"] not in LEGIBLES or a["sensibilidad"] == "personal":
+                continue
+            ext_doc[a["ext"]] += 1
+            docs_cat[(a["parte"], a["categoria"])] += 1
+            mb_cat[(a["parte"], a["categoria"])] += a["size"] / 1024 / 1024
+            if a["parte"] == "propuesta" and a["categoria"] in CAT_PROPUESTA:
+                n_prop += 1
+            if a["parte"] == "proyecto":
+                n_proy += 1
+        if n_prop:
+            prop_ops[s_] += 1
+            prop_docs[s_] += n_prop
+        if n_proy and s_.startswith("ganada"):
+            proy_ops += 1
+            proy_docs[s_] += n_proy
+        ruta, n = por_dir.most_common(1)[0] if por_dir else ("", 0)
+        if n >= 2000:
+            grandes.append((n, o["nombre"], ruta))
+        del archivos
+
+    L = [f"DESGLOSE PARA LAS FASES 2 Y 3 · {ahora()} UTC", "",
+         "FASE 2 · propuestas: oportunidades con dossier / presupuesto / pliegos legibles (y nº de documentos)"]
+    L += [f"  {prop_ops[k]:>5} oport. · {prop_docs[k]:>6} docs  {k}" for k in sorted(prop_ops, key=prop_ops.get, reverse=True)]
+    L += [f"  TOTAL {sum(prop_ops.values())} oportunidades · {sum(prop_docs.values())} documentos", "",
+          f"FASE 3 · proyectos ganados con documentos legibles: {proy_ops} oportunidades · "
+          f"{sum(proy_docs.values())} documentos", "",
+          "DOCUMENTOS LEGIBLES POR PARTE Y CATEGORÍA (nº · MB)"]
+    L += [f"  {v:>6} · {mb_cat[k]:>8.0f} MB  {k[0]} / {k[1]}" for k, v in docs_cat.most_common(40)]
+    L += ["", "EXTENSIONES DE LOS DOCUMENTOS LEGIBLES"] + [f"  {v:>6}  {k}" for k, v in ext_doc.most_common(15)]
+    L += ["", "EXTENSIONES DEL TIPO 'otro'"] + [f"  {v:>6}  {k}" for k, v in ext_otro.most_common(20)]
+    L += ["", "CARPETAS CON MÁS DE 2.000 ARCHIVOS EN UN MISMO DIRECTORIO"]
+    L += [f"  {n:>6}  {nom[:50]}  →  {ruta[:80]}" for n, nom, ruta in sorted(grandes, reverse=True)[:25]]
+    con_proyecto = defaultdict(int)
+    for f in inv["oportunidades"]:
+        if f["negocio_id"]:
+            con_proyecto[f["negocio_id"]] += f["archivos_proyecto"]
+    huecos_anio = Counter(f.get("anio") for f in inv["oportunidades"]
+                          if f["situacion"] in ("ganada SIN documentación", "ganada solo con propuesta")
+                          and not con_proyecto[f["negocio_id"]])
+    sin_c = Counter(anio_de(s.get("fecha_cierre")) for s in inv["negocios_sin_carpeta"] if s["grupo"] == "ganada")
+    L += ["", "GANADAS SIN DOCUMENTACIÓN DE PROYECTO, POR AÑO (carpeta vacía o solo propuesta / sin carpeta)"]
+    for a in sorted(set(huecos_anio) | set(sin_c), key=lambda x: x or 0):
+        L.append(f"  {a or 'sin fecha'}: {huecos_anio.get(a, 0):>4} / {sin_c.get(a, 0):>4}")
+    salida = DATA / "desglose.txt"
+    salida.write_text("\n".join(L) + "\n", "utf-8")
+    print(salida.read_text("utf-8"))
+
+
 # ---------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description="Inventario de oportunidades (Box + HubSpot)")
@@ -684,6 +767,7 @@ def main():
     b = sub.add_parser("box")
     b.add_argument("--forzar", action="store_true", help="vuelve a leer todas las carpetas aunque no hayan cambiado")
     sub.add_parser("cruzar")
+    sub.add_parser("desglose")
     t = sub.add_parser("todo")
     t.add_argument("--forzar", action="store_true")
     args = ap.parse_args()
@@ -694,6 +778,8 @@ def main():
         cmd_box(args)
     elif args.cmd == "cruzar":
         cmd_cruzar(args)
+    elif args.cmd == "desglose":
+        cmd_desglose(args)
     elif args.cmd == "todo":
         cmd_hubspot(args)
         cmd_box(args)
