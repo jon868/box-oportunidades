@@ -78,7 +78,7 @@ PLANTILLA = {
         "fotos y videos": ("fotos y vídeos", "general"),
         "disenos": ("diseños", "general"),
         "mobiliarios distribucion planos": ("mobiliario y planos", "general"),
-        "sectec": ("SecTec", "general"),
+        "sectec": ("secretaría técnica", "general"),  # permisos, rutas, convocatorias, asistencia
         "contenidos": ("contenidos", "general"),
         "otra documentacion": ("otra documentación", "general"),
         "informatica": ("informática", "general"),
