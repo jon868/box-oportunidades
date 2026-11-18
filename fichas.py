@@ -34,7 +34,7 @@ import anthropic
 
 import inventario as inv
 
-VERSION = "v4"
+VERSION = "v5"
 MODELO = os.getenv("MODELO", "claude-haiku-5-5")
 # USD por millón de tokens en Batch (entrada, salida). Orientativos, los mismos del etiquetado de fotos: revísalos en la Console.
 PRECIO_ENTRADA = float(os.getenv("PRECIO_ENTRADA", "0.05"))
@@ -411,7 +411,8 @@ HERRAMIENTA_PROPUESTA = {
         "organismo_y_expediente": {"type": "string"},
         "criterios_adjudicacion": {"type": "string"},
         "documentos": {"type": "array", "items": {"type": "object", "properties": {
-            "id": {"type": "string"}, "tipo": {"type": "string"}, "descripcion": {"type": "string"}},
+            "id": {"type": "string"}, "tipo": {"type": "string"},
+            "descripcion": {"type": "string", "description": "Una frase corta"}},
             "required": ["id", "tipo"]}},
         "palabras_clave": {"type": "array", "items": {"type": "string"}, "maxItems": 15},
         "calidad_informacion": {"type": "string", "enum": ["buena", "parcial", "pobre"]},
@@ -472,7 +473,7 @@ def cmd_propuestas(args):
             sin_docs += 1
             continue
         contenido = contexto_negocio(op) + "\n\n" + "\n\n---\n\n".join(bloques)
-        peticiones.append(peticion(f"p_{cid}", SYSTEM_PROPUESTA, contenido, HERRAMIENTA_PROPUESTA, 2000))
+        peticiones.append(peticion(f"p_{cid}", SYSTEM_PROPUESTA, contenido, HERRAMIENTA_PROPUESTA, 6000))
         if k % 25 == 0:
             print(f"  {k}/{len(ids)}")
     if sin_docs:
@@ -659,7 +660,7 @@ def cmd_proyectos(args):
                      + (f"\n\nTítulo de la propuesta: {prop.get('titulo', '')} (lo propuesto no interesa aquí)" if prop else "")
                      + "\n\nMAPA DE LA DOCUMENTACIÓN\n" + json.dumps(mapa, ensure_ascii=False)
                      + "\n\nDOCUMENTOS CLAVE\n" + "\n\n---\n\n".join(bloques))
-        peticiones.append(peticion(f"y_{cid}", SYSTEM_PROYECTO, contenido, HERRAMIENTA_PROYECTO, 3000))
+        peticiones.append(peticion(f"y_{cid}", SYSTEM_PROYECTO, contenido, HERRAMIENTA_PROYECTO, 8000))
     if enviar("proyectos", peticiones, 1500, args):
         esperar_y_recoger("proyectos")
 
