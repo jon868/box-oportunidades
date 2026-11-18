@@ -34,7 +34,7 @@ import anthropic
 
 import inventario as inv
 
-VERSION = "v3"
+VERSION = "v4"
 MODELO = os.getenv("MODELO", "claude-haiku-5-5")
 # USD por millón de tokens en Batch (entrada, salida). Orientativos, los mismos del etiquetado de fotos: revísalos en la Console.
 PRECIO_ENTRADA = float(os.getenv("PRECIO_ENTRADA", "0.05"))
@@ -75,6 +75,35 @@ Cómo decidir, en este orden:
 3. Solo si la campaña usa algo que claramente NO es nada de lo anterior (otras medidas u otra estructura, p. ej. un
    camión expositor de 10,47 m), pon "otro vehículo (no de la flota actual): <descripción breve>".
 4. Si el documento no describe el vehículo, deja la lista vacía."""
+
+OPCIONES_VEHICULO = FLOTA + ["flota antigua (12 m)", "flota antigua (15 m)", "unidad fabricada a medida",
+                             "otro vehículo (no de la flota actual)", "sin unidad móvil", "no consta"]
+CAMPOS_VEHICULO = {
+    "vehiculo": {"type": "string", "enum": OPCIONES_VEHICULO,
+                 "description": "Vehículo principal según la guía de flota"},
+    "vehiculo_descripcion": {"type": "string", "description": "Cómo lo describe el documento (medidas, tipo, laterales)"},
+}
+MESES = r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|" \
+        r"january|february|march|april|may|june|july|august|september|october|november|december|" \
+        r"janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre|" \
+        r"ene|feb|mar|abr|jun|jul|ago|sep|sept|oct|nov|dic"
+
+
+def normalizar_vehiculo(vehiculo, descripcion, es_venta=False):
+    """Reglas fijas por encima de lo que diga el modelo (Haiku no es constante con la flota)."""
+    d = inv.normal(descripcion or "")
+    if es_venta:
+        return "unidad fabricada a medida"
+    if vehiculo in ("sin unidad móvil",):
+        return vehiculo
+    if re.search(r"semirremolque|semi remolque|trailer|tractora", d) and re.search(r"lateral|expand|extraib|extensib", d):
+        return "Semirremolque"
+    if re.search(r"\b13 ?8\d?\b|13 8 m|1380", d) and re.search(r"lateral|desplieg|despleg|extraib|extensib|modulo", d):
+        return "13,80"
+    if re.search(r"\b12 m\b|\b12 metros\b", d) and vehiculo in ("otro vehículo (no de la flota actual)", "no consta"):
+        return "flota antigua (12 m)"
+    return vehiculo or "no consta"
+
 
 LINEAS = ["Roadshow", "Acciones pedagógicas y sensibilización", "Marca y patrocinio",
           "Promoción y producto", "Manufacturing", "Agencia"]
@@ -261,6 +290,8 @@ def esperar_y_recoger(fase):
                 reg["fin"] = m.stop_reason
                 if not bloque:
                     reg["error"] = "sin ficha"
+                elif m.stop_reason == "max_tokens":
+                    print(f"    ¡ficha cortada por longitud! {r.custom_id}")
             else:
                 reg["error"] = r.result.type
             previos[r.custom_id] = reg
@@ -362,7 +393,7 @@ HERRAMIENTA_PROPUESTA = {
                                             "mixto", "desconocido"]},
         "que_se_propuso": {"type": "string", "description": "3-6 frases"},
         "concepto_creativo": {"type": "string"},
-        "vehiculos": {"type": "array", "items": {"type": "string"}},
+        **CAMPOS_VEHICULO,
         "lineas_servicio": {"type": "array", "items": {"type": "string", "enum": LINEAS}, "maxItems": 3},
         "formato": {"type": "array", "items": {"type": "string"},
                     "description": "p. ej. roadshow, exposición itinerante, escape room, taller, sampling"},
@@ -454,8 +485,8 @@ def cmd_propuestas(args):
 SYSTEM_MAPA = f"""Eres documentalista de alegria-activity (agencia de marketing experiencial con vehículos de flota \
 propia: {", ".join(FLOTA)}). Te paso el árbol de carpetas de un proyecto YA VENDIDO, con el número de archivos de \
 cada carpeta por tipo y una muestra de nombres con su id. No ves el contenido, solo los nombres.
-Llama a guardar_mapa_proyecto, sin escribir texto antes:
-1. secciones: agrupa las carpetas por lo que contienen, usando las categorías permitidas. Una carpeta con miles de \
+Llama a guardar_mapa_proyecto, sin escribir texto antes. Rellena PRIMERO documentos_clave.
+1. secciones (breves; como mucho 15): agrupa las carpetas por lo que contienen, usando las categorías permitidas. Una carpeta con miles de \
 archivos parecidos (inscripciones, hojas de firmas, certificados por colegio, fotos de público) se describe en una \
 línea; no es más importante por tener muchos archivos.
 2. documentos_clave: hasta 15 ids (SOLO de los que aparecen en el árbol) que mejor cuenten el proyecto: memoria o \
@@ -469,6 +500,8 @@ HERRAMIENTA_MAPA = {
     "name": "guardar_mapa_proyecto",
     "description": "Guarda el mapa de la documentación del proyecto.",
     "input_schema": {"type": "object", "properties": {
+        "documentos_clave": {"type": "array", "maxItems": 15, "items": {"type": "object", "properties": {
+            "id": {"type": "string"}, "motivo": {"type": "string"}}, "required": ["id", "motivo"]}},
         "resumen_estructura": {"type": "string", "description": "2-3 frases: cómo está organizada la documentación"},
         "secciones": {"type": "array", "items": {"type": "object", "properties": {
             "categoria": {"type": "string", "enum": SECCIONES},
@@ -476,9 +509,7 @@ HERRAMIENTA_MAPA = {
             "descripcion": {"type": "string"},
             "archivos": {"type": "integer"}},
             "required": ["categoria", "rutas", "descripcion"]}},
-        "documentos_clave": {"type": "array", "maxItems": 15, "items": {"type": "object", "properties": {
-            "id": {"type": "string"}, "motivo": {"type": "string"}}, "required": ["id", "motivo"]}},
-    }, "required": ["resumen_estructura", "secciones", "documentos_clave"]},
+    }, "required": ["documentos_clave", "resumen_estructura", "secciones"]},
 }
 
 
@@ -525,7 +556,7 @@ def cmd_mapas(args):
         op = ops[cid]
         proyecto = [a for a in archivos_de(cid) if a["parte"] != "propuesta"]
         contenido = contexto_negocio(op) + f"\n\nÁRBOL DEL PROYECTO ({len(proyecto)} archivos)\n" + arbol(proyecto)
-        peticiones.append(peticion(f"m_{cid}", SYSTEM_MAPA, contenido, HERRAMIENTA_MAPA, 3000))
+        peticiones.append(peticion(f"m_{cid}", SYSTEM_MAPA, contenido, HERRAMIENTA_MAPA, 8000))
     if enviar("mapas", peticiones, 1500, args):
         esperar_y_recoger("mapas")
 
@@ -553,7 +584,7 @@ HERRAMIENTA_PROYECTO = {
     "input_schema": {"type": "object", "properties": {
         "resumen": {"type": "string", "description": "Qué se hizo realmente, 4-8 frases"},
         "fechas": {"type": "string"},
-        "vehiculos": {"type": "array", "items": {"type": "string"}},
+        **CAMPOS_VEHICULO,
         "recorrido": {"type": "array", "items": {"type": "string"}, "description": "Ciudades, sedes o países visitados"},
         "paradas": {"type": ["integer", "null"]},
         "visitantes_total": {"type": ["integer", "null"], "description": "Personas atendidas o visitantes, si consta"},
@@ -589,7 +620,8 @@ def completar_clave(clave, archivos, maximo=15):
     for a in candidatos:
         if len(clave) >= maximo:
             break
-        base = re.sub(r"\d+", "", inv.normal(a["nombre"]))[:40]
+        base = re.sub(rf"\b({MESES})\b", "", re.sub(r"\d+", "", inv.normal(a["nombre"])))
+        base = re.sub(r"\s+", " ", base).strip()[:40]
         if base in vistos:          # informes mensuales con el mismo nombre: solo el más reciente
             continue
         vistos.add(base)
@@ -642,6 +674,10 @@ def cmd_indice(_args):
         archivos = archivos_de(cid)
         fotos = sum(1 for a in archivos if a["tipo"] == "imagen" and a["parte"] == "proyecto")
         p, m, y = props.get(cid), mapas.get(cid), proys.get(cid)
+        es_venta = (p or {}).get("tipo") == "venta o fabricación de unidad móvil"
+        for f in (p, y):
+            if f:
+                f["vehiculo"] = normalizar_vehiculo(f.get("vehiculo"), f.get("vehiculo_descripcion"), es_venta)
         reg = {
             "carpeta_id": cid, "carpeta": op["carpeta"], "pais": op["pais"], "enlace_box": op["enlace_box"],
             "situacion": op["situacion"], "negocio_id": op["negocio_id"], "etapa": op["etapa"], "anio": op["anio"],
@@ -658,14 +694,16 @@ def cmd_indice(_args):
         filas.append({
             "carpeta": op["carpeta"], "situacion": op["situacion"], "anio": op["anio"], "enlace_box": op["enlace_box"],
             "propuesta_titulo": (p or {}).get("titulo", ""), "propuesta_resumen": (p or {}).get("que_se_propuso", ""),
-            "propuesta_vehiculos": ", ".join((p or {}).get("vehiculos", []) or []),
+            "propuesta_vehiculo": (p or {}).get("vehiculo", ""),
+            "propuesta_vehiculo_descripcion": (p or {}).get("vehiculo_descripcion", ""),
             "propuesta_importe": (p or {}).get("importe_propuesto", ""),
             "propuesta_calidad": (p or {}).get("calidad_informacion", ""),
             "proyecto_resumen": (y or {}).get("resumen", ""),
             "proyecto_recorrido": ", ".join((y or {}).get("recorrido", []) or []),
             "proyecto_visitantes": (y or {}).get("visitantes_total", ""),
             "proyecto_visitantes_detalle": (y or {}).get("visitantes_detalle", ""),
-            "proyecto_vehiculos": ", ".join((y or {}).get("vehiculos", []) or []),
+            "proyecto_vehiculo": (y or {}).get("vehiculo", ""),
+            "proyecto_vehiculo_descripcion": (y or {}).get("vehiculo_descripcion", ""),
             "mapa_secciones": "; ".join(f"{s['categoria']}: {', '.join(s.get('rutas', [])[:3])}" for s in (m or {}).get("secciones", [])),
             "revision_ok": "", "notas_revision": "",
         })
