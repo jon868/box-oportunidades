@@ -103,12 +103,19 @@ El texto que extrae Box se guarda en `fichas/textos/` y no se vuelve a pedir.
 Los archivos de datos personales nunca se envían a la IA (ni su nombre).
 Para todo el archivo, cuando el piloto esté revisado: `python fichas.py seleccionar --todas` y las mismas fases.
 
+### Tras cambiar las reglas de clasificación (sin volver a leer Box)
+```bash
+python inventario.py reclasificar   # reaplica las reglas a lo inventariado y borra textos de archivos ahora personales
+python inventario.py cruzar
+```
+
 ## Sensibilidad y permisos
 Cada archivo lleva una sensibilidad:
 - **general**: dossier, diseños, fotos, planos, secretaría técnica (SecTec: permisos, rutas, convocatorias), otra documentación…
 - **economico**: `Presupuestos`, `Contrato` y cualquier archivo cuyo nombre diga presupuesto, factura, contrato,
   tarifa, coste, pedido…
-- **personal**: `Personal` y cualquier archivo cuyo nombre diga nómina, DNI, NIE, seguridad social, TC2, CV…
+- **personal**: `Personal`, cualquier carpeta de la ruta que se llame personal, documentación personal, nóminas, RRHH,
+  trabajadores… y cualquier archivo cuyo nombre diga nómina, DNI, NIE, seguridad social, TC2, CV…
   El contenido de estos archivos **no se lee nunca** en las fases 2 y 3: solo se inventaría que existen.
 
 Hoy todos los usuarios ven todo. Para tener usuarios **completos** y **limitados** (fase 4):

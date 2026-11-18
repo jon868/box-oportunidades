@@ -92,6 +92,12 @@ PALABRAS_ECONOMICO = ["presupuesto", "ppto", "factura", "contrato", "oferta econ
 PALABRAS_PERSONAL = ["nomina", "dni", "nie", "seguridad social", "ta2", "tc2", "idc", "curriculum", "cv",
                      "pasaporte", "alta trabajador", "baja trabajador", "certificado delitos", "carne conducir"]
 
+# Carpetas (en cualquier nivel de la ruta) cuyo contenido es personal o económico aunque no sean de plantilla
+CARPETAS_PERSONALES = ["personal", "documentacion personal", "nominas", "rrhh", "recursos humanos", "trabajadores",
+                       "contratos laborales", "contratacion personal", "seguridad social", "dni", "curriculums", "cv"]
+CARPETAS_ECONOMICAS = ["facturacion", "facturas", "presupuestos", "contrato", "contratos", "tasas", "pagos", "gastos",
+                       "cotizacion", "cotizaciones", "oferta economica"]
+
 GRUPOS_EXT = {
     "documento": {"pdf", "doc", "docx", "odt", "rtf", "txt", "pages", "md"},
     "hoja de cálculo": {"xls", "xlsx", "xlsm", "csv", "ods", "numbers"},
@@ -216,8 +222,8 @@ def _contiene(texto_normal, palabras):
     return any(re.search(rf"(?:^| ){re.escape(normal(p))}(?:$| |s )", f" {texto_normal} ") for p in palabras)
 
 
-def clasificar(parte, sub, nombre):
-    """(categoría, sensibilidad) de un archivo según la carpeta de plantilla y su nombre."""
+def clasificar(parte, sub, nombre, ruta=""):
+    """(categoría, sensibilidad) de un archivo según la carpeta de plantilla, las carpetas de su ruta y su nombre."""
     cat, sens = "sin clasificar", "general"
     tabla = PLANTILLA.get(normal(parte))
     ns = normal(sub)
@@ -229,12 +235,64 @@ def clasificar(parte, sub, nombre):
         cat, sens = tabla["sectec"]
     elif sub:
         cat = sub                                                   # subcarpeta fuera de plantilla
+    segmentos = [normal(x) for x in (ruta or "").split("/") if x]
     n = normal(nombre)
-    if sens != "personal" and _contiene(n, PALABRAS_PERSONAL):
+    if sens != "personal" and (_contiene(n, PALABRAS_PERSONAL)
+                               or any(_contiene(sg, CARPETAS_PERSONALES) for sg in segmentos)):
         sens = "personal"
-    elif sens == "general" and _contiene(n, PALABRAS_ECONOMICO):
+    elif sens == "general" and (_contiene(n, PALABRAS_ECONOMICO)
+                                or any(_contiene(sg, CARPETAS_ECONOMICAS) for sg in segmentos)):
         sens = "economico"
     return cat, sens
+
+
+def clasificar_archivos(archivos):
+    """Pone parte, categoría, sensibilidad y tipo a cada archivo y devuelve los recuentos por parte."""
+    partes = defaultdict(lambda: {"archivos": 0, "mb": 0.0, "subcarpetas": Counter()})
+    for a in archivos:
+        trozos = a["ruta"].split("/") if a["ruta"] else []
+        parte = trozos[0] if trozos else "(raíz)"
+        sub = trozos[1] if len(trozos) > 1 else ""
+        clave = normal(parte)
+        parte_n = ("propuesta" if clave == "propuesta comercial" else "proyecto" if clave == "proyecto" else "fuera de plantilla")
+        a["parte"] = parte_n
+        a["categoria"], a["sensibilidad"] = clasificar(parte, sub, a["nombre"], a["ruta"])
+        a["tipo"] = EXT_GRUPO.get(a["ext"], "otro")
+        partes[parte_n]["archivos"] += 1
+        partes[parte_n]["mb"] += a["size"] / 1024 / 1024
+        partes[parte_n]["subcarpetas"][a["categoria"]] += 1
+    return partes
+
+
+def cmd_reclasificar(_args):
+    """Vuelve a clasificar los archivos ya inventariados (sin leer Box) tras cambiar las reglas."""
+    bx = leer_json(BOX_JSON)
+    if not bx:
+        sys.exit("Falta box_oportunidades.json: ejecuta antes 'box'.")
+    antes, despues = Counter(), Counter()
+    borrados = 0
+    for o in bx["oportunidades"]:
+        p = DIR_CARPETAS / f"{o['id']}.json"
+        if not p.exists():
+            continue
+        archivos = json.loads(p.read_text("utf-8"))
+        antes.update(a["sensibilidad"] for a in archivos)
+        partes = clasificar_archivos(archivos)
+        o["partes"] = {k: {"archivos": v["archivos"], "mb": round(v["mb"], 1), "por_categoria": dict(v["subcarpetas"])}
+                       for k, v in partes.items()}
+        guardar_archivos(o, archivos)
+        despues.update(a["sensibilidad"] for a in archivos)
+        for a in archivos:   # texto ya extraído de archivos que ahora son personales: se borra
+            if a["sensibilidad"] == "personal":
+                t = DATA / "fichas" / "textos" / f"{a['id']}.txt"
+                if t.exists():
+                    t.unlink()
+                    borrados += 1
+    escribir_json(BOX_JSON, bx, compacto=True)
+    print("Sensibilidad antes:  " + ", ".join(f"{k} {v}" for k, v in antes.most_common()))
+    print("Sensibilidad ahora:  " + ", ".join(f"{k} {v}" for k, v in despues.most_common()))
+    print(f"Textos extraídos de archivos personales borrados: {borrados}")
+    print("Ejecuta ahora 'python inventario.py cruzar' para rehacer los informes.")
 
 
 def recorrer(folder_id, ruta, archivos, carpetas_vacias, aviso=None):
@@ -265,19 +323,7 @@ def ficha_oportunidad(pais, carpeta):
         if grande:
             print(f"    empiezo {carpeta['name'][:60]} ({mb(carpeta['size']) / 1024:.0f} GB)", flush=True)
         recorrer(carpeta["id"], "", archivos, vacias, {"nombre": carpeta["name"], "carpetas": 0} if grande else None)
-    partes = defaultdict(lambda: {"archivos": 0, "mb": 0.0, "subcarpetas": Counter()})
-    for a in archivos:
-        trozos = a["ruta"].split("/") if a["ruta"] else []
-        parte = trozos[0] if trozos else "(raíz)"
-        sub = trozos[1] if len(trozos) > 1 else ""
-        clave = normal(parte)
-        parte_n = ("propuesta" if clave == "propuesta comercial" else "proyecto" if clave == "proyecto" else "fuera de plantilla")
-        a["parte"] = parte_n
-        a["categoria"], a["sensibilidad"] = clasificar(parte, sub, a["nombre"])
-        a["tipo"] = EXT_GRUPO.get(a["ext"], "otro")
-        partes[parte_n]["archivos"] += 1
-        partes[parte_n]["mb"] += a["size"] / 1024 / 1024
-        partes[parte_n]["subcarpetas"][a["categoria"]] += 1
+    partes = clasificar_archivos(archivos)
     ficha = {
         "id": carpeta["id"], "nombre": carpeta["name"], "pais": pais,
         "size": carpeta.get("size", 0), "modificada": carpeta.get("modified_at"), "creada": carpeta.get("created_at"),
@@ -768,6 +814,7 @@ def main():
     b.add_argument("--forzar", action="store_true", help="vuelve a leer todas las carpetas aunque no hayan cambiado")
     sub.add_parser("cruzar")
     sub.add_parser("desglose")
+    sub.add_parser("reclasificar")
     t = sub.add_parser("todo")
     t.add_argument("--forzar", action="store_true")
     args = ap.parse_args()
@@ -780,6 +827,8 @@ def main():
         cmd_cruzar(args)
     elif args.cmd == "desglose":
         cmd_desglose(args)
+    elif args.cmd == "reclasificar":
+        cmd_reclasificar(args)
     elif args.cmd == "todo":
         cmd_hubspot(args)
         cmd_box(args)

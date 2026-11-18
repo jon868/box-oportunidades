@@ -34,7 +34,7 @@ import anthropic
 
 import inventario as inv
 
-VERSION = "v1"
+VERSION = "v2"
 MODELO = os.getenv("MODELO", "claude-haiku-5-5")
 # USD por millón de tokens en Batch (entrada, salida). Orientativos, los mismos del etiquetado de fotos: revísalos en la Console.
 PRECIO_ENTRADA = float(os.getenv("PRECIO_ENTRADA", "0.05"))
@@ -53,6 +53,23 @@ LEGIBLES = ("documento", "hoja de cálculo", "presentación")
 TEXTO_PLANO = {"txt", "csv", "md", "rtf"}
 
 FLOTA = ["13,80", "Airstream", "CajaMar", "Camión rígido", "Cotazero", "Furgón", "Plataformas", "Semirremolque", "Set TV"]
+# Cómo reconocer la flota en un documento (la rotulación cambia en cada campaña)
+GUIA_FLOTA = """Flota propia de alegria-activity (se alquila con la campaña; NO es "fabricada a medida"):
+- 13,80: autocar o unidad de 13,80 m con lateral desplegable / laterales extraíbles (módulo saliente). Existe desde 2006.
+- Semirremolque: tráiler (cabeza tractora + semirremolque) expositivo de gran tamaño con laterales expandibles.
+- Camión rígido: camión rígido con caja expositiva de laterales acristalados.
+- Furgón: furgoneta grande con carrocería tipo caja, puerta lateral, escalera y toldo.
+- Airstream: remolque/caravana compacta que se abre por un lateral como escaparate, con rampa.
+- CajaMar: camión carrozado con escalera y rampa de acceso lateral (antigua oficina bancaria móvil).
+- Plataformas: módulo-remolque grande tipo sala, con ventanas.
+- Set TV: módulo plató de televisión con terraza superior.
+- Cotazero.
+Antes hubo vehículos de 12 m y de 15 m que ya no existen: si el documento usa uno de esos para una campaña, pon
+"flota antigua (12 m)" o "flota antigua (15 m)". Una unidad de 12-14 m que no se despliega es un autobús.
+"Unidad fabricada a medida" SOLO cuando lo que se vende o suministra es el vehículo (venta, concurso de suministro,
+fabricación para el cliente). Si es una campaña o alquiler y no sabes cuál de la flota es, pon
+"flota (sin identificar): <descripción breve>"."""
+
 LINEAS = ["Roadshow", "Acciones pedagógicas y sensibilización", "Marca y patrocinio",
           "Promoción y producto", "Manufacturing", "Agencia"]
 SECCIONES = ["fotos", "vídeos", "diseño gráfico y vinilos", "planos y mobiliario", "ficha técnica del vehículo",
@@ -320,8 +337,8 @@ Te paso los documentos de la propuesta comercial de una oportunidad (dossier, pr
 del negocio en el CRM. Rellena la ficha llamando a guardar_ficha_propuesta, sin escribir texto antes.
 Reglas:
 1. Solo lo que digan los documentos. Si algo no aparece, déjalo vacío o null. No inventes cifras, fechas ni vehículos.
-2. Vehículos: usa el nombre de la flota solo si el documento lo identifica claramente; si es una unidad fabricada \
-para el cliente, "unidad fabricada a medida"; si no se sabe, vacío.
+2. Vehículos: sigue esta guía.
+{GUIA_FLOTA}
 3. Si un documento es de otra oportunidad o está vacío, dilo en notas.
 4. No incluyas nombres ni datos de personas (salvo cargos institucionales del cliente).
 5. Resumen en castellano, concreto, pensado para que un comercial sepa en 30 segundos qué se presentó."""
@@ -437,7 +454,9 @@ archivos parecidos (inscripciones, hojas de firmas, certificados por colegio, fo
 línea; no es más importante por tener muchos archivos.
 2. documentos_clave: hasta 15 ids (SOLO de los que aparecen en el árbol) que mejor cuenten el proyecto: memoria o \
 informe final, resumen de asistencia o resultados, hoja de ruta o calendario, ficha técnica del vehículo, permisos \
-tipo, manual o guion de la experiencia, contrato principal. Evita duplicados y versiones antiguas.
+tipo, manual o guion de la experiencia, contrato principal. Si hay informes periódicos (mensuales, semanales), elige \
+el ÚLTIMO y el final o memoria, que acumulan los datos, y cualquier hoja de datos de visitantes o asistencia. Evita \
+duplicados y versiones antiguas.
 3. No incluyas nombres de personas."""
 
 HERRAMIENTA_MAPA = {
@@ -447,7 +466,7 @@ HERRAMIENTA_MAPA = {
         "resumen_estructura": {"type": "string", "description": "2-3 frases: cómo está organizada la documentación"},
         "secciones": {"type": "array", "items": {"type": "object", "properties": {
             "categoria": {"type": "string", "enum": SECCIONES},
-            "rutas": {"type": "array", "items": {"type": "string"}},
+            "rutas": {"type": "array", "items": {"type": "string"}, "minItems": 1},
             "descripcion": {"type": "string"},
             "archivos": {"type": "integer"}},
             "required": ["categoria", "rutas", "descripcion"]}},
@@ -457,7 +476,7 @@ HERRAMIENTA_MAPA = {
 }
 
 
-def arbol(archivos, max_chars=45000):
+def arbol(archivos, max_chars=80000):
     """Árbol de carpetas compacto: recuentos por tipo y muestra de nombres (prioriza documentos legibles)."""
     por_dir = defaultdict(list)
     personales = 0
@@ -513,9 +532,14 @@ escribir texto antes.
 Reglas:
 1. Solo lo que digan los documentos; si no aparece, vacío o null. Las cifras (visitantes, paradas, fechas) tal cual \
 aparezcan, indicando de qué documento salen.
-2. Distingue lo previsto (propuesta) de lo realizado (informes, memorias); prioriza lo realizado.
-3. Sin nombres ni datos de personas (solo cargos institucionales del cliente).
-4. En castellano, concreto, pensado para que alguien de la agencia encuentre después qué se hizo y dónde está."""
+2. Cuenta lo REALIZADO (informes, memorias, rutas definitivas, permisos concedidos), no lo propuesto: no repitas la \
+propuesta. Si hay informes periódicos, usa el último o el final, que acumulan los datos.
+3. Rellena siempre visitantes_detalle: la cifra de visitantes, participantes, grupos o sesiones y de qué documento \
+sale; si no aparece en ningún documento, escribe "no consta en los documentos leídos".
+4. Vehículos: sigue esta guía.
+{GUIA_FLOTA}
+5. Sin nombres ni datos de personas (solo cargos institucionales del cliente).
+6. En castellano, concreto, pensado para que alguien de la agencia encuentre después qué se hizo y dónde está."""
 
 HERRAMIENTA_PROYECTO = {
     "name": "guardar_ficha_proyecto",
@@ -526,8 +550,9 @@ HERRAMIENTA_PROYECTO = {
         "vehiculos": {"type": "array", "items": {"type": "string"}},
         "recorrido": {"type": "array", "items": {"type": "string"}, "description": "Ciudades, sedes o países visitados"},
         "paradas": {"type": ["integer", "null"]},
-        "asistencia": {"type": "object", "properties": {
-            "total": {"type": ["integer", "null"]}, "detalle": {"type": "string"}, "documento_id": {"type": "string"}}},
+        "visitantes_total": {"type": ["integer", "null"], "description": "Personas atendidas o visitantes, si consta"},
+        "visitantes_detalle": {"type": "string", "description": "Cifras (visitantes, grupos, sesiones, encuestas) y documento del que salen"},
+        "visitantes_documento_id": {"type": "string"},
         "resultados": {"type": "array", "items": {"type": "string"}, "description": "KPIs y resultados con su cifra"},
         "experiencia": {"type": "string", "description": "Cómo era la experiencia o el espacio"},
         "permisos_y_tramites": {"type": "string"},
@@ -538,7 +563,7 @@ HERRAMIENTA_PROYECTO = {
             "required": ["id", "tipo", "descripcion"]}},
         "palabras_clave": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
         "calidad_informacion": {"type": "string", "enum": ["buena", "parcial", "pobre"]},
-    }, "required": ["resumen", "documentos", "calidad_informacion"]},
+    }, "required": ["resumen", "visitantes_detalle", "documentos", "calidad_informacion"]},
 }
 
 
@@ -564,7 +589,7 @@ def cmd_proyectos(args):
                    f"{textos[a['id']] or '(sin texto extraíble)'}" for a in clave]
         prop = resultados("propuestas").get(cid)
         contenido = (contexto_negocio(ops[cid])
-                     + (f"\n\nPROPUESTA (ficha ya hecha): {prop.get('que_se_propuso', '')}" if prop else "")
+                     + (f"\n\nTítulo de la propuesta: {prop.get('titulo', '')} (lo propuesto no interesa aquí)" if prop else "")
                      + "\n\nMAPA DE LA DOCUMENTACIÓN\n" + json.dumps(mapa, ensure_ascii=False)
                      + "\n\nDOCUMENTOS CLAVE\n" + "\n\n---\n\n".join(bloques))
         peticiones.append(peticion(f"y_{cid}", SYSTEM_PROYECTO, contenido, HERRAMIENTA_PROYECTO, 3000))
@@ -603,7 +628,9 @@ def cmd_indice(_args):
             "propuesta_calidad": (p or {}).get("calidad_informacion", ""),
             "proyecto_resumen": (y or {}).get("resumen", ""),
             "proyecto_recorrido": ", ".join((y or {}).get("recorrido", []) or []),
-            "proyecto_asistencia": json.dumps((y or {}).get("asistencia") or {}, ensure_ascii=False),
+            "proyecto_visitantes": (y or {}).get("visitantes_total", ""),
+            "proyecto_visitantes_detalle": (y or {}).get("visitantes_detalle", ""),
+            "proyecto_vehiculos": ", ".join((y or {}).get("vehiculos", []) or []),
             "mapa_secciones": "; ".join(f"{s['categoria']}: {', '.join(s.get('rutas', [])[:3])}" for s in (m or {}).get("secciones", [])),
             "revision_ok": "", "notas_revision": "",
         })
