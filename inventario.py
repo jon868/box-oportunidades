@@ -411,6 +411,11 @@ def grupo_etapa(n):
     return ETAPA_GRUPO.get(n.get("dealstage"), "en curso") if n else None
 
 
+def nombre_base(nombre):
+    """Nombre sin el ID de HubSpot del principio: '5192… - ABAI GROUP_X' y 'ABAI GROUP_X' son gemelas."""
+    return normal(re.sub(r"^\s*\d{9,14}\s*-\s*", "", nombre or ""))
+
+
 def principal(negocios):
     """Si una carpeta tiene varios negocios: el ganado; si no, el de cierre más reciente."""
     if not negocios:
@@ -453,8 +458,9 @@ def cmd_cruzar(_args):
             por_folder[str(n["box_opp_folderid"]).strip()].append(n)
         por_nombre[normal(n.get("dealname"))].append(n)
 
+    # 1ª pasada: cruce directo de cada carpeta con su(s) negocio(s)
     usados = set()
-    filas = []
+    cruces = {}
     for op in ops:
         metodo, cand = None, por_folder.get(op["id"], [])
         if cand:
@@ -464,12 +470,29 @@ def cmd_cruzar(_args):
             if m and m.group(1) in por_id:
                 cand, metodo = [por_id[m.group(1)]], "id en el nombre"
         if not cand:
-            nn = normal(re.sub(r"^\s*\d{9,14}\s*-\s*", "", op["nombre"]))
-            c = [n for n in por_nombre.get(nn, []) if not n.get("box_opp_folderid")]
-            if len(c) >= 1:
+            c = [n for n in por_nombre.get(nombre_base(op["nombre"]), []) if not n.get("box_opp_folderid")]
+            if c:
                 cand, metodo = c, "nombre"
-        for n in cand:
-            usados.add(n["id"])
+        cruces[op["id"]] = (cand, metodo)
+        usados.update(n["id"] for n in cand)
+
+    # 2ª pasada: carpetas gemelas (la de la época de Salesforce y la que crea HubSpot con el ID delante).
+    # Si una no tiene negocio y su gemela sí, hereda el de la gemela.
+    gemelas = defaultdict(list)
+    for op in ops:
+        gemelas[(op["pais"], nombre_base(op["nombre"]))].append(op["id"])
+    for op in ops:
+        cand, metodo = cruces[op["id"]]
+        if cand:
+            continue
+        for otra in gemelas[(op["pais"], nombre_base(op["nombre"]))]:
+            if otra != op["id"] and cruces[otra][0]:
+                cruces[op["id"]] = (cruces[otra][0], "carpeta gemela")
+                break
+
+    filas = []
+    for op in ops:
+        cand, metodo = cruces[op["id"]]
         neg = principal(cand)
         sit = situacion(op, neg)
         tipos = Counter(a["tipo"] for a in op["archivos"])
@@ -478,6 +501,7 @@ def cmd_cruzar(_args):
             "carpeta_id": op["id"], "carpeta": op["nombre"], "pais": op["pais"],
             "enlace_box": f"https://app.box.com/folder/{op['id']}",
             "situacion": sit,
+            "carpetas_gemelas": " ".join(x for x in gemelas[(op["pais"], nombre_base(op["nombre"]))] if x != op["id"]),
             "negocio_id": neg["id"] if neg else "", "negocio": neg.get("dealname") if neg else "",
             "etapa": neg.get("etapa") if neg else "", "importe": neg.get("amount") if neg else "",
             "fecha_cierre": (neg.get("closedate") or "")[:10] if neg else "",
@@ -541,7 +565,13 @@ def cmd_cruzar(_args):
                              "negocios_sin_carpeta": sin_carpeta})
     _csv(INV_CSV, filas)
     importe = lambda f: float(f.get("importe") or 0)  # noqa: E731
-    huecos = sorted([f for f in filas if f["situacion"] in ("ganada SIN documentación", "ganada solo con propuesta")],
+    # Un negocio es hueco si NINGUNA de sus carpetas tiene proyecto (puede estar en la gemela)
+    proyecto_por_negocio = defaultdict(int)
+    for f in filas:
+        if f["negocio_id"]:
+            proyecto_por_negocio[f["negocio_id"]] += f["archivos_proyecto"]
+    huecos = sorted([f for f in filas if f["situacion"] in ("ganada SIN documentación", "ganada solo con propuesta")
+                     and not proyecto_por_negocio[f["negocio_id"]]],
                     key=importe, reverse=True)
     huecos += sorted([{**s, "situacion": "ganada " + s["estado_carpeta"]} for s in sin_carpeta
                       if s["grupo"] == "ganada" and not s["estado_carpeta"].startswith("carpeta fuera")],
@@ -580,6 +610,8 @@ def _resumen(filas, sin_carpeta, hs, bx):
          "SITUACIÓN DE CADA CARPETA"]
     L += [f"  {v:>5}  {k}" for k, v in sit.most_common()]
     L += ["", "CÓMO SE HA CRUZADO CON HUBSPOT"] + [f"  {v:>5}  {k}" for k, v in cruce.most_common()]
+    n_gem = sum(1 for f in filas if f["carpetas_gemelas"])
+    L += ["", f"CARPETAS CON GEMELA (misma oportunidad en la carpeta antigua y en la creada por HubSpot): {n_gem}"]
     L += ["", "NEGOCIOS DE HUBSPOT SIN CARPETA EN OPORTUNIDADES (todos / ganados)"]
     L += [f"  {v:>5} / {fuera_g.get(k, 0):>4}  {k}" for k, v in fuera.most_common()]
     L += ["", "CARPETAS CON CONTENIDO POR PAÍS"] + [f"  {v:>5}  {k}" for k, v in pais.most_common()]

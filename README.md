@@ -10,6 +10,12 @@ toda la documentación del proyecto (fotos, vehículo, rutas, asistencia, planos
 - El cruce se hace por la propiedad `box_opp_folderid` del negocio, por el ID de HubSpot al principio del
   nombre de la carpeta (carpetas nuevas) o, si no hay otra cosa, por nombre exacto.
 
+**Carpetas de dos épocas.** Hasta 2026 las carpetas las creaba Salesforce; ahora las crea HubSpot al dar de alta
+el negocio, con la misma plantilla y el ID del negocio delante del nombre. Todo el histórico de Salesforce se importó
+a HubSpot, así que una misma oportunidad puede tener **dos carpetas gemelas** (`ABAI GROUP_X` y
+`519264768186 - ABAI GROUP_X`). El script las agrupa bajo el mismo negocio (columna `carpetas_gemelas`) y no da por
+hueco un negocio cuya documentación está en la gemela.
+
 **Una carpeta vacía no significa que no pasara nada.** Si el negocio está ganado y no hay documentación,
 sale en `huecos.csv` para que alguien la complete.
 
