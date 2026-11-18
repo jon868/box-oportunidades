@@ -217,9 +217,34 @@ def box_carpeta(folder_id):
             "modificada": j.get("modified_at"), "creada": j.get("created_at"), "ruta": ruta}
 
 
+_REGEX = {}
+
+
 def _contiene(texto_normal, palabras):
-    """Coincidencia por inicio de palabra, para que 'dni' no salte dentro de otra palabra."""
-    return any(re.search(rf"(?:^| ){re.escape(normal(p))}(?:$| |s )", f" {texto_normal} ") for p in palabras)
+    """Coincidencia por inicio de palabra, para que 'dni' no salte dentro de otra palabra.
+    Una sola expresión regular precompilada por lista de palabras."""
+    clave = id(palabras)
+    rx = _REGEX.get(clave)
+    if rx is None:
+        alternativas = "|".join(re.escape(normal(p)) for p in palabras)
+        rx = _REGEX[clave] = re.compile(rf"(?:^| )(?:{alternativas})(?:$| |s )")
+    return rx.search(f" {texto_normal} ") is not None
+
+
+_RUTA_SENS = {}
+
+
+def _sens_ruta(ruta):
+    """Sensibilidad que impone la ruta (se calcula una vez por carpeta, no por archivo)."""
+    if ruta not in _RUTA_SENS:
+        segmentos = [normal(x) for x in (ruta or "").split("/") if x]
+        if any(_contiene(sg, CARPETAS_PERSONALES) for sg in segmentos):
+            _RUTA_SENS[ruta] = "personal"
+        elif any(_contiene(sg, CARPETAS_ECONOMICAS) for sg in segmentos):
+            _RUTA_SENS[ruta] = "economico"
+        else:
+            _RUTA_SENS[ruta] = "general"
+    return _RUTA_SENS[ruta]
 
 
 def clasificar(parte, sub, nombre, ruta=""):
@@ -235,13 +260,11 @@ def clasificar(parte, sub, nombre, ruta=""):
         cat, sens = tabla["sectec"]
     elif sub:
         cat = sub                                                   # subcarpeta fuera de plantilla
-    segmentos = [normal(x) for x in (ruta or "").split("/") if x]
+    por_ruta = _sens_ruta(ruta)
     n = normal(nombre)
-    if sens != "personal" and (_contiene(n, PALABRAS_PERSONAL)
-                               or any(_contiene(sg, CARPETAS_PERSONALES) for sg in segmentos)):
+    if sens != "personal" and (por_ruta == "personal" or _contiene(n, PALABRAS_PERSONAL)):
         sens = "personal"
-    elif sens == "general" and (_contiene(n, PALABRAS_ECONOMICO)
-                                or any(_contiene(sg, CARPETAS_ECONOMICAS) for sg in segmentos)):
+    elif sens == "general" and (por_ruta == "economico" or _contiene(n, PALABRAS_ECONOMICO)):
         sens = "economico"
     return cat, sens
 
@@ -271,7 +294,10 @@ def cmd_reclasificar(_args):
         sys.exit("Falta box_oportunidades.json: ejecuta antes 'box'.")
     antes, despues = Counter(), Counter()
     borrados = 0
-    for o in bx["oportunidades"]:
+    total = len(bx["oportunidades"])
+    for k, o in enumerate(bx["oportunidades"], 1):
+        if k % 200 == 0:
+            print(f"  {k}/{total}…", flush=True)
         p = DIR_CARPETAS / f"{o['id']}.json"
         if not p.exists():
             continue
