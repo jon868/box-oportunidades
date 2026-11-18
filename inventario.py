@@ -231,13 +231,18 @@ def clasificar(parte, sub, nombre):
     return cat, sens
 
 
-def recorrer(folder_id, ruta, archivos, carpetas_vacias):
+def recorrer(folder_id, ruta, archivos, carpetas_vacias, aviso=None):
     """Lista recursivamente; no entra en carpetas que Box dice que pesan 0."""
     for it in box_items(folder_id):
         sub = f"{ruta}/{it['name']}" if ruta else it["name"]
         if it["type"] == "folder":
             if it.get("size", 0) > 0:
-                recorrer(it["id"], sub, archivos, carpetas_vacias)
+                if aviso:
+                    aviso["carpetas"] += 1
+                    if aviso["carpetas"] % 200 == 0:
+                        print(f"    … {aviso['nombre'][:60]}: {aviso['carpetas']} subcarpetas, "
+                              f"{len(archivos)} archivos leídos", flush=True)
+                recorrer(it["id"], sub, archivos, carpetas_vacias, aviso)
             else:
                 carpetas_vacias.append(sub)
         elif it["type"] == "file" and not it["name"].startswith("._"):   # restos de Mac
@@ -250,7 +255,10 @@ def ficha_oportunidad(pais, carpeta):
     """Recorre una oportunidad y resume qué hay en cada parte."""
     archivos, vacias = [], []
     if carpeta.get("size", 0) > 0:
-        recorrer(carpeta["id"], "", archivos, vacias)
+        grande = carpeta.get("size", 0) > 5 * 1024 ** 3      # > 5 GB: avisa en el log mientras la lee
+        if grande:
+            print(f"    empiezo {carpeta['name'][:60]} ({mb(carpeta['size']) / 1024:.0f} GB)", flush=True)
+        recorrer(carpeta["id"], "", archivos, vacias, {"nombre": carpeta["name"], "carpetas": 0} if grande else None)
     partes = defaultdict(lambda: {"archivos": 0, "mb": 0.0, "subcarpetas": Counter()})
     for a in archivos:
         trozos = a["ruta"].split("/") if a["ruta"] else []
