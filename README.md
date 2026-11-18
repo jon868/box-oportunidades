@@ -31,9 +31,11 @@ Solo **lee** de Box y de HubSpot: no escribe, mueve ni borra nada.
 | 4. Buscador | `buscar_oportunidades` en el conector box-mcp + skill para Claude Team y Open WebUI | 0 |
 
 ## 1. Antes de empezar
-- **HubSpot** → Configuración → Integraciones → Apps privadas → crear `inventario-oportunidades` con permisos
-  **solo de lectura**: `crm.objects.deals.read`, `crm.objects.companies.read`, `crm.objects.owners.read`.
-  Copia el token.
+- **HubSpot** → Development → Keys → Service keys → **Create service key**, nombre `inventario-oportunidades`,
+  con estos permisos **solo de lectura**: `crm.objects.deals.read`, `crm.objects.companies.read`,
+  `crm.objects.owners.read`. Crear → abrir la clave → Show → Copy. (Las apps privadas antiguas ya no se pueden crear;
+  la clave de servicio se usa igual, como `Bearer`.) Hace falta ser superadministrador o tener acceso a
+  herramientas de desarrollador.
 - Ten a mano las credenciales de la app de Box "claudebox" (las mismas del conector y del etiquetado).
 
 ## 2. Crear el servicio en Easypanel
