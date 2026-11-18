@@ -124,10 +124,14 @@ def leer_json(p, defecto=None):
     return json.loads(p.read_text("utf-8")) if p.exists() else defecto
 
 
-def escribir_json(p, datos):
+def escribir_json(p, datos, compacto=False):
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(datos, ensure_ascii=False, indent=1), "utf-8")
+    with tmp.open("w", encoding="utf-8") as fh:      # directo al disco, sin montar el texto entero en memoria
+        if compacto:
+            json.dump(datos, fh, ensure_ascii=False, separators=(",", ":"))
+        else:
+            json.dump(datos, fh, ensure_ascii=False, indent=1)
     tmp.replace(p)
 
 
@@ -323,10 +327,11 @@ def cmd_box(args):
                 print(f"  {i}/{len(tareas)} · leídas {leidas} · reutilizadas {reutilizadas} · errores {len(errores)}")
                 hechas = {r["id"] for r in resultado}
                 escribir_json(BOX_JSON, {"generado": ahora(), "parcial": True, "errores": errores,
-                                         "oportunidades": resultado + [o for k, o in cache.items() if k not in hechas]})
+                                         "oportunidades": resultado + [o for k, o in cache.items() if k not in hechas]},
+                              compacto=True)
 
     escribir_json(BOX_JSON, {"generado": ahora(), "raiz": CARPETA_RAIZ, "oportunidades": resultado,
-                             "archivos_sueltos": sueltos, "errores": errores})
+                             "archivos_sueltos": sueltos, "errores": errores}, compacto=True)
     print(f"Box: {len(resultado)} oportunidades ({leidas} leídas, {reutilizadas} sin cambios), "
           f"{sum(len(o['archivos']) for o in resultado)} archivos, {len(errores)} errores → {BOX_JSON}")
 
@@ -570,7 +575,7 @@ def cmd_cruzar(_args):
 
     # Salidas
     escribir_json(INV_JSON, {"generado": ahora(), "version": VERSION, "oportunidades": filas,
-                             "negocios_sin_carpeta": sin_carpeta})
+                             "negocios_sin_carpeta": sin_carpeta}, compacto=True)
     _csv(INV_CSV, filas)
     importe = lambda f: float(f.get("importe") or 0)  # noqa: E731
     # Un negocio es hueco si NINGUNA de sus carpetas tiene proyecto (puede estar en la gemela)
