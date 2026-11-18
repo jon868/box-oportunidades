@@ -67,8 +67,9 @@ GUIA_FLOTA = """Flota propia de alegria-activity (se alquila con la campaña; NO
 Antes hubo vehículos de 12 m y de 15 m que ya no existen: si el documento usa uno de esos para una campaña, pon
 "flota antigua (12 m)" o "flota antigua (15 m)". Una unidad de 12-14 m que no se despliega es un autobús.
 "Unidad fabricada a medida" SOLO cuando lo que se vende o suministra es el vehículo (venta, concurso de suministro,
-fabricación para el cliente). Si es una campaña o alquiler y no sabes cuál de la flota es, pon
-"flota (sin identificar): <descripción breve>"."""
+fabricación para el cliente). Si la campaña usa un vehículo que no encaja claramente con la flota actual (p. ej. un
+camión expositor de 10,47 m con laterales extraíbles), NO lo asignes a la flota: pon
+"otro vehículo (no de la flota actual): <descripción breve>". Ante la duda, mejor esto que adivinar."""
 
 LINEAS = ["Roadshow", "Acciones pedagógicas y sensibilización", "Marca y patrocinio",
           "Promoción y producto", "Manufacturing", "Agencia"]
