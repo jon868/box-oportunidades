@@ -34,7 +34,7 @@ import anthropic
 
 import inventario as inv
 
-VERSION = "v2"
+VERSION = "v3"
 MODELO = os.getenv("MODELO", "claude-haiku-5-5")
 # USD por millón de tokens en Batch (entrada, salida). Orientativos, los mismos del etiquetado de fotos: revísalos en la Console.
 PRECIO_ENTRADA = float(os.getenv("PRECIO_ENTRADA", "0.05"))
@@ -66,10 +66,15 @@ GUIA_FLOTA = """Flota propia de alegria-activity (se alquila con la campaña; NO
 - Cotazero.
 Antes hubo vehículos de 12 m y de 15 m que ya no existen: si el documento usa uno de esos para una campaña, pon
 "flota antigua (12 m)" o "flota antigua (15 m)". Una unidad de 12-14 m que no se despliega es un autobús.
-"Unidad fabricada a medida" SOLO cuando lo que se vende o suministra es el vehículo (venta, concurso de suministro,
-fabricación para el cliente). Si la campaña usa un vehículo que no encaja claramente con la flota actual (p. ej. un
-camión expositor de 10,47 m con laterales extraíbles), NO lo asignes a la flota: pon
-"otro vehículo (no de la flota actual): <descripción breve>". Ante la duda, mejor esto que adivinar."""
+Cómo decidir, en este orden:
+1. Si lo que se vende o suministra es el vehículo (venta, concurso de suministro, fabricación para el cliente):
+   "unidad fabricada a medida" (aunque sea un semirremolque o mida 13,80 m).
+2. Si es una campaña o alquiler y la descripción encaja con la flota, usa el nombre de la flota. Reglas seguras:
+   cualquier unidad de 13,80 m (o 13,8 / 13,85 m) con laterales extraíbles o desplegables → "13,80";
+   cabeza tractora + semirremolque expositivo con laterales expandibles o extraíbles → "Semirremolque".
+3. Solo si la campaña usa algo que claramente NO es nada de lo anterior (otras medidas u otra estructura, p. ej. un
+   camión expositor de 10,47 m), pon "otro vehículo (no de la flota actual): <descripción breve>".
+4. Si el documento no describe el vehículo, deja la lista vacía."""
 
 LINEAS = ["Roadshow", "Acciones pedagógicas y sensibilización", "Marca y patrocinio",
           "Promoción y producto", "Manufacturing", "Agencia"]
@@ -568,6 +573,30 @@ HERRAMIENTA_PROYECTO = {
 }
 
 
+PATRON_CLAVE = re.compile(r"informe|memoria|datos|participaci|asistencia|visitante|registro|balance|resultado|"
+                          r"ruta|calendario|kpi|estadistic|resumen|cierre|final")
+
+
+def completar_clave(clave, archivos, maximo=15):
+    """Si el mapa se queda corto, añade por nombre informes, memorias, datos de participación, registros y rutas."""
+    ya = {a["id"] for a in clave}
+    candidatos = [a for a in archivos if a["id"] not in ya and a["tipo"] in LEGIBLES and a["sensibilidad"] != "personal"
+                  and a["parte"] != "propuesta"
+                  and PATRON_CLAVE.search(inv.normal(a["nombre"] + " " + a["ruta"].split("/")[-1]))]
+    candidatos.sort(key=lambda a: (bool(PATRON_CLAVE.search(inv.normal(a["nombre"]))),
+                                   a["ext"] in ("xlsx", "xls", "pdf"), a["modificado"]), reverse=True)
+    vistos = set()
+    for a in candidatos:
+        if len(clave) >= maximo:
+            break
+        base = re.sub(r"\d+", "", inv.normal(a["nombre"]))[:40]
+        if base in vistos:          # informes mensuales con el mismo nombre: solo el más reciente
+            continue
+        vistos.add(base)
+        clave.append(a)
+    return clave
+
+
 def cmd_proyectos(args):
     ops = oportunidades()
     mapas = resultados("mapas")
@@ -581,11 +610,16 @@ def cmd_proyectos(args):
             print(f"  sin mapa todavía: {ops[cid]['carpeta'][:60]} (ejecuta antes 'mapas')")
             continue
         por_id = {a["id"]: a for a in archivos_de(cid)}
-        clave = [por_id[d["id"]] for d in mapa.get("documentos_clave", [])
+        propuestos = mapa.get("documentos_clave", [])
+        clave = [por_id[d["id"]] for d in propuestos
                  if d.get("id") in por_id and por_id[d["id"]]["tipo"] in LEGIBLES
                  and por_id[d["id"]]["sensibilidad"] != "personal"][:15]
+        validos = len(clave)
+        clave = completar_clave(clave, list(por_id.values()), maximo=max(10, validos))
         textos = leer_textos(clave, {a["id"]: 12000 for a in clave})
-        motivo = {d["id"]: d.get("motivo", "") for d in mapa.get("documentos_clave", [])}
+        print(f"  {ops[cid]['carpeta'][:50]}: el mapa propone {len(propuestos)} documentos, {validos} válidos, "
+              f"+{len(clave) - validos} añadidos por nombre, {sum(1 for t in textos.values() if t)} con texto", flush=True)
+        motivo = {d["id"]: d.get("motivo", "") for d in propuestos}
         bloques = [f"[{a['nombre']}] (id {a['id']}, ruta {a['ruta']}, motivo: {motivo.get(a['id'], '')})\n"
                    f"{textos[a['id']] or '(sin texto extraíble)'}" for a in clave]
         prop = resultados("propuestas").get(cid)
