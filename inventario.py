@@ -8,7 +8,8 @@ con las carpetas de Box / 0.Salesforce / Oportunidades (fuente de verdad de la d
 
 Uso:
   python inventario.py hubspot          Descarga todos los negocios (datos/hubspot_negocios.json)
-  python inventario.py box [--forzar]   Recorre Oportunidades en Box (datos/box_oportunidades.json); reanuda
+  python inventario.py box [--forzar]   Recorre Oportunidades en Box (datos/box_oportunidades.json y
+                                        datos/carpetas/<id>.json con los archivos de cada una); reanuda
   python inventario.py cruzar           Une ambos y genera inventario.json/.csv, huecos.csv y resumen.txt
   python inventario.py todo             Las tres cosas seguidas
 
@@ -43,7 +44,8 @@ HILOS = int(os.getenv("HILOS", "6"))
 DATA = Path(os.getenv("DATA_DIR", "datos"))
 
 HS_JSON = DATA / "hubspot_negocios.json"
-BOX_JSON = DATA / "box_oportunidades.json"
+BOX_JSON = DATA / "box_oportunidades.json"     # un resumen por oportunidad (pequeño)
+DIR_CARPETAS = DATA / "carpetas"                 # la lista de archivos de cada oportunidad, en su propio JSON
 INV_JSON = DATA / "inventario.json"
 INV_CSV = DATA / "inventario.csv"
 HUECOS_CSV = DATA / "huecos.csv"
@@ -276,19 +278,55 @@ def ficha_oportunidad(pais, carpeta):
         partes[parte_n]["archivos"] += 1
         partes[parte_n]["mb"] += a["size"] / 1024 / 1024
         partes[parte_n]["subcarpetas"][a["categoria"]] += 1
-    return {
+    ficha = {
         "id": carpeta["id"], "nombre": carpeta["name"], "pais": pais,
         "size": carpeta.get("size", 0), "modificada": carpeta.get("modified_at"), "creada": carpeta.get("created_at"),
         "partes": {k: {"archivos": v["archivos"], "mb": round(v["mb"], 1), "por_categoria": dict(v["subcarpetas"])}
                    for k, v in partes.items()},
-        "archivos": archivos,
         "leida": ahora(),
     }
+    return guardar_archivos(ficha, archivos)
+
+
+def guardar_archivos(ficha, archivos):
+    """Escribe la lista de archivos en carpetas/<id>.json y deja en la ficha solo los recuentos."""
+    escribir_json(DIR_CARPETAS / f"{ficha['id']}.json", archivos, compacto=True)
+    ficha["n_archivos"] = len(archivos)
+    ficha["tipos"] = dict(Counter(a["tipo"] for a in archivos))
+    ficha["sensibilidades"] = dict(Counter(a["sensibilidad"] for a in archivos))
+    ficha["docs_legibles"] = sum(1 for a in archivos if a["tipo"] in ("documento", "hoja de cálculo", "presentación")
+                                 and a["sensibilidad"] != "personal")
+    return ficha
+
+
+def cargar_cache():
+    """Lee box_oportunidades.json sin cargarlo entero en memoria. Si es de la versión anterior (con la lista de
+    archivos dentro), la pasa al formato nuevo sobre la marcha."""
+    if not BOX_JSON.exists():
+        return {}
+    cache = {}
+    try:
+        import ijson
+        with BOX_JSON.open("rb") as fh:
+            items = ijson.items(fh, "oportunidades.item", use_float=True)
+            for o in items:
+                if "archivos" in o:
+                    o = guardar_archivos(o, o.pop("archivos"))
+                cache[o["id"]] = o
+    except ImportError:
+        for o in (leer_json(BOX_JSON, {}) or {}).get("oportunidades", []):
+            if "archivos" in o:
+                o = guardar_archivos(o, o.pop("archivos"))
+            cache[o["id"]] = o
+    except Exception as e:  # noqa: BLE001 — archivo a medio escribir: se empieza de cero
+        print(f"  No se ha podido aprovechar la pasada anterior ({e}); se lee todo de nuevo.")
+        return {}
+    print(f"  Pasada anterior: {len(cache)} oportunidades ya leídas")
+    return cache
 
 
 def cmd_box(args):
-    previo = leer_json(BOX_JSON, {}) or {}
-    cache = {o["id"]: o for o in previo.get("oportunidades", [])}
+    cache = cargar_cache()
     paises = [p for p in box_items(CARPETA_RAIZ) if p["type"] == "folder" and p["name"] not in NO_PAISES]
     tareas = []
     sueltos = []
@@ -308,7 +346,8 @@ def cmd_box(args):
     def trabajo(pais, h):
         c = cache.get(h["id"])
         if (c and not args.forzar and c.get("modificada") == h.get("modified_at")
-                and c.get("size") == h.get("size", 0) and c.get("nombre") == h["name"]):
+                and c.get("size") == h.get("size", 0) and c.get("nombre") == h["name"]
+                and (DIR_CARPETAS / f"{h['id']}.json").exists()):
             return c, True
         return ficha_oportunidad(pais, h), False
 
@@ -333,7 +372,7 @@ def cmd_box(args):
     escribir_json(BOX_JSON, {"generado": ahora(), "raiz": CARPETA_RAIZ, "oportunidades": resultado,
                              "archivos_sueltos": sueltos, "errores": errores}, compacto=True)
     print(f"Box: {len(resultado)} oportunidades ({leidas} leídas, {reutilizadas} sin cambios), "
-          f"{sum(len(o['archivos']) for o in resultado)} archivos, {len(errores)} errores → {BOX_JSON}")
+          f"{sum(o.get('n_archivos', 0) for o in resultado)} archivos, {len(errores)} errores → {BOX_JSON}")
 
 
 # ---------------------------------------------------------------- HubSpot
@@ -508,8 +547,8 @@ def cmd_cruzar(_args):
         cand, metodo = cruces[op["id"]]
         neg = principal(cand)
         sit = situacion(op, neg)
-        tipos = Counter(a["tipo"] for a in op["archivos"])
-        sens = Counter(a["sensibilidad"] for a in op["archivos"])
+        tipos = Counter(op.get("tipos", {}))
+        sens = Counter(op.get("sensibilidades", {}))
         filas.append({
             "carpeta_id": op["id"], "carpeta": op["nombre"], "pais": op["pais"],
             "enlace_box": f"https://app.box.com/folder/{op['id']}",
@@ -613,11 +652,12 @@ def _resumen(filas, sin_carpeta, hs, bx):
     pais = Counter(f["pais"] for f in filas if not f["situacion"].endswith("vacía"))
     fuera = Counter(s["estado_carpeta"].split(" (")[0] for s in sin_carpeta)
     fuera_g = Counter(s["estado_carpeta"].split(" (")[0] for s in sin_carpeta if s["grupo"] == "ganada")
-    tot_arch = sum(len(o["archivos"]) for o in bx["oportunidades"])
-    tipos = Counter(a["tipo"] for o in bx["oportunidades"] for a in o["archivos"])
-    sens = Counter(a["sensibilidad"] for o in bx["oportunidades"] for a in o["archivos"])
-    docs = sum(1 for o in bx["oportunidades"] for a in o["archivos"]
-               if a["tipo"] in ("documento", "hoja de cálculo", "presentación") and a["sensibilidad"] != "personal")
+    tot_arch = sum(o.get("n_archivos", 0) for o in bx["oportunidades"])
+    tipos, sens = Counter(), Counter()
+    for o in bx["oportunidades"]:
+        tipos.update(o.get("tipos", {}))
+        sens.update(o.get("sensibilidades", {}))
+    docs = sum(o.get("docs_legibles", 0) for o in bx["oportunidades"])
     L = [f"INVENTARIO DE OPORTUNIDADES · {ahora()} UTC", "",
          f"Box: {len(filas)} carpetas de oportunidad, {tot_arch} archivos · HubSpot: {len(hs['negocios'])} negocios", "",
          "SITUACIÓN DE CADA CARPETA"]

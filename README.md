@@ -59,11 +59,12 @@ Solo **lee** de Box y de HubSpot: no escribe, mueve ni borra nada.
 ## 3. Ejecutar el inventario (consola del servicio)
 ```bash
 python inventario.py hubspot      # ~1 min: unos 5.200 negocios
-nohup python inventario.py box > /app/datos/log.txt 2>&1 &    # recorre Box en segundo plano
+setsid nohup python inventario.py box > /app/datos/log.txt 2>&1 < /dev/null &   # en segundo plano
 tail -f /app/datos/log.txt        # Ctrl+C deja de mirar; el proceso sigue
 python inventario.py cruzar       # cuando termine 'box': genera los informes
 ```
-- `box` no entra en carpetas que Box dice que pesan 0, guarda cada 100 oportunidades y reanuda si se corta
+- `box` no entra en carpetas que Box dice que pesan 0, guarda la lista de archivos de cada oportunidad en
+  `datos/carpetas/<id>.json` (para no tenerlo todo en memoria), guarda el avance cada 100 y reanuda si se corta
   (relanza la misma línea). En pasadas posteriores solo vuelve a leer las carpetas que han cambiado.
 - No redespliegues el servicio mientras corre.
 
