@@ -91,6 +91,10 @@ MESES = r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre
 
 def normalizar_vehiculo(vehiculo, descripcion, es_venta=False):
     """Reglas fijas por encima de lo que diga el modelo (Haiku no es constante con la flota)."""
+    if isinstance(vehiculo, list):
+        vehiculo = vehiculo[0] if vehiculo else None
+    if isinstance(descripcion, list):
+        descripcion = " ".join(map(str, descripcion))
     d = inv.normal(descripcion or "")
     if es_venta:
         return "unidad fabricada a medida"
