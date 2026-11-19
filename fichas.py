@@ -666,6 +666,41 @@ def cmd_proyectos(args):
 
 
 # ---------------------------------------------------------------- índice y revisión
+def _lista(x):
+    """Lista de textos aunque el modelo devuelva un texto suelto, None o elementos raros."""
+    if x is None:
+        return []
+    if isinstance(x, str):
+        return [x] if x.strip() else []
+    if isinstance(x, list):
+        return [e if isinstance(e, str) else json.dumps(e, ensure_ascii=False) for e in x if e]
+    return [str(x)]
+
+
+def _secciones(m):
+    """Secciones del mapa como diccionarios, aunque alguna venga como texto."""
+    out = []
+    for sec in _lista_cruda((m or {}).get("secciones")):
+        if isinstance(sec, dict):
+            out.append({"categoria": str(sec.get("categoria", "otros")), "rutas": _lista(sec.get("rutas")),
+                        "descripcion": str(sec.get("descripcion", "")), "archivos": sec.get("archivos")})
+        elif isinstance(sec, str) and sec.strip():
+            out.append({"categoria": "otros", "rutas": [], "descripcion": sec, "archivos": None})
+    return out
+
+
+def _lista_cruda(x):
+    if x is None:
+        return []
+    if isinstance(x, str):
+        try:
+            v = json.loads(x)
+            return v if isinstance(v, list) else [x]
+        except ValueError:
+            return [x]
+    return x if isinstance(x, list) else [x]
+
+
 def cmd_indice(_args):
     ops = oportunidades()
     props, mapas, proys = resultados("propuestas"), resultados("mapas"), resultados("proyectos")
@@ -675,6 +710,9 @@ def cmd_indice(_args):
         archivos = archivos_de(cid)
         fotos = sum(1 for a in archivos if a["tipo"] == "imagen" and a["parte"] == "proyecto")
         p, m, y = props.get(cid), mapas.get(cid), proys.get(cid)
+        if m:
+            m = dict(m, secciones=_secciones(m),
+                     documentos_clave=[d for d in _lista_cruda(m.get("documentos_clave")) if isinstance(d, dict)])
         es_venta = (p or {}).get("tipo") == "venta o fabricación de unidad móvil"
         for f in (p, y):
             if f:
@@ -695,17 +733,17 @@ def cmd_indice(_args):
         filas.append({
             "carpeta": op["carpeta"], "situacion": op["situacion"], "anio": op["anio"], "enlace_box": op["enlace_box"],
             "propuesta_titulo": (p or {}).get("titulo", ""), "propuesta_resumen": (p or {}).get("que_se_propuso", ""),
-            "propuesta_vehiculo": (p or {}).get("vehiculo", ""),
+            "propuesta_vehiculo": str((p or {}).get("vehiculo", "") or ""),
             "propuesta_vehiculo_descripcion": (p or {}).get("vehiculo_descripcion", ""),
             "propuesta_importe": (p or {}).get("importe_propuesto", ""),
             "propuesta_calidad": (p or {}).get("calidad_informacion", ""),
             "proyecto_resumen": (y or {}).get("resumen", ""),
-            "proyecto_recorrido": ", ".join((y or {}).get("recorrido", []) or []),
+            "proyecto_recorrido": ", ".join(_lista((y or {}).get("recorrido"))),
             "proyecto_visitantes": (y or {}).get("visitantes_total", ""),
             "proyecto_visitantes_detalle": (y or {}).get("visitantes_detalle", ""),
             "proyecto_vehiculo": (y or {}).get("vehiculo", ""),
             "proyecto_vehiculo_descripcion": (y or {}).get("vehiculo_descripcion", ""),
-            "mapa_secciones": "; ".join(f"{s['categoria']}: {', '.join(s.get('rutas', [])[:3])}" for s in (m or {}).get("secciones", [])),
+            "mapa_secciones": "; ".join(f"{s['categoria']}: {', '.join(s['rutas'][:3])}" for s in (m or {}).get("secciones", [])),
             "revision_ok": "", "notas_revision": "",
         })
     inv.escribir_json(INDICE, {"generado": inv.ahora(), "version": VERSION, "oportunidades": salida})
