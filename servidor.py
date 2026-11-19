@@ -3,17 +3,32 @@
 Mini servidor para descargar el inventario de oportunidades desde el navegador.
 Protegido con usuario y contraseña (DESCARGA_USUARIO / DESCARGA_PASSWORD).
 Solo sirve los archivos de TIPOS; nunca los JSON de trabajo ni el .env.
+
+Además lanza cada noche la actualización incremental (python fichas.py actualizar) a la hora de
+ACTUALIZACION_HORA (por defecto 03:00, hora de ACTUALIZACION_ZONA, Europe/Madrid). Se desactiva con
+ACTUALIZACION=no. El resultado queda en datos/fichas/log_nocturno.txt.
 """
 import base64
 import hmac
 import os
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 DATA = Path(os.getenv("DATA_DIR", "datos"))
 USUARIO = os.getenv("DESCARGA_USUARIO", "alegria")
 PASSWORD = os.getenv("DESCARGA_PASSWORD", "")
 PUERTO = int(os.getenv("PORT", "8080"))
+ACTUALIZAR = os.getenv("ACTUALIZACION", "si").lower() not in ("no", "0", "false") and bool(os.getenv("ANTHROPIC_API_KEY"))
+HORA = os.getenv("ACTUALIZACION_HORA", "03:00")
+ZONA = ZoneInfo(os.getenv("ACTUALIZACION_ZONA", "Europe/Madrid"))
+LOG_NOCHE = DATA / "fichas" / "log_nocturno.txt"
+ULTIMA = DATA / ".ultima_actualizacion"
 
 TIPOS = {"resumen.txt": "text/plain; charset=utf-8",
          "desglose.txt": "text/plain; charset=utf-8",
@@ -23,7 +38,9 @@ TIPOS = {"resumen.txt": "text/plain; charset=utf-8",
          "inventario.json": "application/json; charset=utf-8",
          "revision.csv": "text/csv; charset=utf-8",
          "indice_oportunidades.json": "application/json; charset=utf-8",
-         "log.txt": "text/plain; charset=utf-8"}
+         "log.txt": "text/plain; charset=utf-8",
+         "log_todo.txt": "text/plain; charset=utf-8",
+         "log_nocturno.txt": "text/plain; charset=utf-8"}
 
 
 def disponibles():
@@ -85,7 +102,36 @@ class Manejador(BaseHTTPRequestHandler):
         self._texto(404, "No encontrado")
 
 
+def programador():
+    """Cada medio minuto mira la hora; a ACTUALIZACION_HORA lanza la actualización una vez al día."""
+    while True:
+        try:
+            ahora = datetime.now(ZONA)
+            hoy = ahora.strftime("%Y-%m-%d")
+            hecha = ULTIMA.read_text().strip() if ULTIMA.exists() else ""
+            if ahora.strftime("%H:%M") >= HORA and hecha != hoy:
+                ULTIMA.write_text(hoy)
+                LOG_NOCHE.parent.mkdir(parents=True, exist_ok=True)
+                if LOG_NOCHE.exists() and LOG_NOCHE.stat().st_size > 5_000_000:   # se queda con lo último
+                    LOG_NOCHE.write_bytes(LOG_NOCHE.read_bytes()[-2_000_000:])
+                with LOG_NOCHE.open("a", encoding="utf-8") as log:
+                    log.write(f"\n--- lanzada {ahora:%Y-%m-%d %H:%M} ({ZONA.key}) ---\n")
+                    log.flush()
+                    subprocess.run([sys.executable, "fichas.py", "actualizar"], stdout=log, stderr=subprocess.STDOUT,
+                                   cwd=Path(__file__).parent, check=False)
+        except Exception as e:  # noqa: BLE001 — el programador no debe tumbar el servidor
+            print(f"[actualización] error: {e}", flush=True)
+        time.sleep(30)
+
+
 if __name__ == "__main__":
     DATA.mkdir(parents=True, exist_ok=True)
     print(f"Servidor de descargas en el puerto {PUERTO}")
+    if ACTUALIZAR:
+        if not ULTIMA.exists():   # recién instalado: la primera actualización, esta noche
+            ULTIMA.write_text(datetime.now(ZONA).strftime("%Y-%m-%d"))
+        threading.Thread(target=programador, daemon=True).start()
+        print(f"Actualización automática cada día a las {HORA} ({ZONA.key})")
+    else:
+        print("Actualización automática desactivada (ACTUALIZACION=no o falta ANTHROPIC_API_KEY)")
     ThreadingHTTPServer(("0.0.0.0", PUERTO), Manejador).serve_forever()

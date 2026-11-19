@@ -14,6 +14,8 @@ de Anthropic: no gasta nada de Claude Team.
   python fichas.py estado                   Estado de los lotes enviados
   python fichas.py seguir <fase>            Espera y recoge un lote ya enviado (si se cortó la consola)
   python fichas.py indice                   Junta todo en fichas/indice_oportunidades.json y fichas/revision.csv
+  python fichas.py actualizar               Actualización incremental (la que se lanza cada noche): HubSpot + Box,
+                                            fichas solo de lo nuevo o cambiado, e índice
 
 Fases: propuestas, mapas, proyectos. Cada una enseña el coste estimado y pide confirmación (salvo --si).
 Solo LEE de Box y de los datos del inventario. No escribe, mueve ni borra nada en Box.
@@ -48,6 +50,9 @@ SELECCION = F / "seleccion.json"
 LOTES = F / "lotes.json"
 INDICE = F / "indice_oportunidades.json"
 REVISION = F / "revision.csv"
+HUELLAS = F / "huellas.json"
+CERROJO = DATA / ".actualizando"
+MAX_NOCTURNO = int(os.getenv("MAX_FICHAS_NOCHE", "300"))
 
 LEGIBLES = ("documento", "hoja de cálculo", "presentación")
 TEXTO_PLANO = {"txt", "csv", "md", "rtf"}
@@ -756,6 +761,98 @@ def cmd_indice(_args):
           f"→ {INDICE}\nRevisión → {REVISION}")
 
 
+# ---------------------------------------------------------------- actualización incremental
+def _hash(partes):
+    import hashlib
+    return hashlib.sha1("\n".join(sorted(partes)).encode()).hexdigest()[:16]
+
+
+def huella_propuesta(archivos):
+    """Cambia si cambian los documentos que se leerían para la ficha de propuesta."""
+    docs, _ = elegir_docs_propuesta(archivos)
+    return _hash(f"{d['id']}:{d['modificado']}" for d in docs) if docs else None
+
+
+def huella_proyecto(archivos):
+    """Cambia si se añaden, quitan o modifican documentos del proyecto (no fotos ni archivos personales)."""
+    docs = [a for a in archivos if a["parte"] != "propuesta" and a["tipo"] in LEGIBLES and a["sensibilidad"] != "personal"]
+    return _hash(f"{a['id']}:{a['modificado']}" for a in docs) if docs else None
+
+
+def cmd_actualizar(args):
+    import fcntl
+    CERROJO.parent.mkdir(parents=True, exist_ok=True)
+    cerrojo = CERROJO.open("w")
+    try:
+        fcntl.flock(cerrojo, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit("Ya hay una actualización en marcha.")
+    t0 = time.time()
+    print(f"=== Actualización {inv.ahora()} UTC ===", flush=True)
+    a = argparse.Namespace(forzar=False, si=True, todas=False)
+    inv.cmd_hubspot(a)
+    inv.cmd_box(a)
+    inv.cmd_cruzar(a)
+
+    ops = oportunidades()
+    huellas = leer(HUELLAS, None)
+    props, mapas, proys = resultados("propuestas"), resultados("mapas"), resultados("proyectos")
+    primera = huellas is None
+    huellas = huellas or {}
+    rehacer_p, rehacer_y = [], []
+    nuevas = {}
+    for cid, op in ops.items():
+        tiene_prop = op["archivos_propuesta"] or op["archivos_fuera_plantilla"]
+        es_proyecto = op["situacion"].startswith("ganada") and op["archivos_proyecto"]
+        if not tiene_prop and not es_proyecto:
+            continue
+        archivos = archivos_de(cid)
+        h = {"p": huella_propuesta(archivos) if tiene_prop else None,
+             "y": huella_proyecto(archivos) if es_proyecto else None}
+        nuevas[cid] = h
+        previa = huellas.get(cid)
+        if primera and previa is None:
+            # Primera vez: lo que ya tiene ficha se da por bueno; solo se hace lo que falta
+            if h["p"] and cid not in props:
+                rehacer_p.append(cid)
+            if h["y"] and (cid not in mapas or cid not in proys):
+                rehacer_y.append(cid)
+            continue
+        if h["p"] and (cid not in props or (previa or {}).get("p") != h["p"]):
+            rehacer_p.append(cid)
+        if h["y"] and (cid not in proys or (previa or {}).get("y") != h["y"]):
+            rehacer_y.append(cid)
+
+    total = len(rehacer_p) + 2 * len(rehacer_y)
+    print(f"Para rehacer: {len(rehacer_p)} propuestas y {len(rehacer_y)} proyectos"
+          + (" (primera pasada: se guardan las huellas de lo ya hecho)" if primera else ""), flush=True)
+    if total > MAX_NOCTURNO and not getattr(args, "si", False):
+        print(f"¡Demasiado para una actualización automática ({total} peticiones > {MAX_NOCTURNO})! "
+              f"No se envía nada. Revísalo y lánzalo a mano con: python fichas.py actualizar --si", flush=True)
+        rehacer_p, rehacer_y = [], []
+    hechas_p, hechas_y = set(), set()
+    if rehacer_p or rehacer_y:
+        escribir(SELECCION, {"propuestas": rehacer_p, "proyectos": rehacer_y, "piloto": False, "actualizacion": inv.ahora()})
+        b = argparse.Namespace(si=True, forzar=True)
+        if rehacer_p:
+            cmd_propuestas(b)
+            hechas_p = set(rehacer_p) & set(resultados("propuestas"))
+        if rehacer_y:
+            cmd_mapas(b)
+            cmd_proyectos(b)
+            hechas_y = set(rehacer_y) & set(resultados("proyectos"))
+    # Guardar huellas: lo que ya estaba bien + lo que se ha hecho ahora (lo fallido se reintentará mañana)
+    for cid, h in nuevas.items():
+        previa = huellas.get(cid, {})
+        huellas[cid] = {
+            "p": h["p"] if (cid in hechas_p or (cid not in rehacer_p and h["p"])) else previa.get("p"),
+            "y": h["y"] if (cid in hechas_y or (cid not in rehacer_y and h["y"])) else previa.get("y"),
+        }
+    escribir(HUELLAS, huellas)
+    cmd_indice(args)
+    print(f"=== Fin {inv.ahora()} UTC · {int(time.time() - t0) // 60} min ===", flush=True)
+
+
 # ---------------------------------------------------------------- main
 def cmd_estado(_args):
     lotes = leer(LOTES, {}) or {}
@@ -785,6 +882,8 @@ def main():
     sg = sub.add_parser("seguir")
     sg.add_argument("fase", choices=["propuestas", "mapas", "proyectos"])
     sub.add_parser("indice")
+    ac = sub.add_parser("actualizar")
+    ac.add_argument("--si", action="store_true", help="no aplicar el tope de fichas por noche")
     args = ap.parse_args()
     F.mkdir(parents=True, exist_ok=True)
     if args.cmd == "seleccionar":
@@ -809,6 +908,8 @@ def main():
         esperar_y_recoger(args.fase)
     elif args.cmd == "indice":
         cmd_indice(args)
+    elif args.cmd == "actualizar":
+        cmd_actualizar(args)
 
 
 if __name__ == "__main__":

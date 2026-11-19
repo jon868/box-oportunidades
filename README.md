@@ -109,6 +109,21 @@ python inventario.py reclasificar   # reaplica las reglas a lo inventariado y bo
 python inventario.py cruzar
 ```
 
+## 6. Actualización automática (cada noche)
+El servidor de descargas lanza cada día `python fichas.py actualizar` a las **03:00 (hora de Madrid)**:
+1. Vuelve a leer HubSpot y Box (solo las carpetas que han cambiado) y rehace los informes del inventario.
+2. Rehace **solo** las fichas de lo nuevo o cambiado. Cada ficha guarda una huella de los documentos que usó
+   (`fichas/huellas.json`): una versión nueva del dossier rehace la propuesta; documentos nuevos en el proyecto
+   rehacen su mapa y su ficha de proyecto. La primera vez solo apunta las huellas de lo ya hecho.
+3. Regenera `fichas/indice_oportunidades.json`; el conector lo recarga solo cada hora.
+
+- Resultado de cada noche: `https://<dominio>/fichas/log_nocturno.txt`.
+- Si una noche hay más de `MAX_FICHAS_NOCHE` (300) peticiones que hacer, no envía nada y lo deja escrito en el log:
+  revísalo y lánzalo a mano con `python fichas.py actualizar --si`.
+- Nunca corren dos actualizaciones a la vez (también si la lanzas a mano).
+- Variables: `ACTUALIZACION=no` la desactiva; `ACTUALIZACION_HORA=03:00`; `ACTUALIZACION_ZONA=Europe/Madrid`.
+  Sin `ANTHROPIC_API_KEY` no se programa.
+
 ## Sensibilidad y permisos
 Cada archivo lleva una sensibilidad:
 - **general**: dossier, diseños, fotos, planos, secretaría técnica (SecTec: permisos, rutas, convocatorias), otra documentación…
