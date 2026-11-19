@@ -197,7 +197,7 @@ def box_items(folder_id):
     salida, offset = [], 0
     while True:
         r = box_get(f"/folders/{folder_id}/items",
-                    {"fields": "id,type,name,size,extension,modified_at,created_at", "limit": 1000, "offset": offset})
+                    {"fields": "id,type,name,size,extension,modified_at,created_at,sha1", "limit": 1000, "offset": offset})
         r.raise_for_status()
         j = r.json()
         salida += j["entries"]
@@ -338,7 +338,7 @@ def recorrer(folder_id, ruta, archivos, carpetas_vacias, aviso=None):
         elif it["type"] == "file" and not it["name"].startswith("._"):   # restos de Mac
             archivos.append({"id": it["id"], "nombre": it["name"], "ruta": ruta,
                              "ext": (it.get("extension") or "").lower(), "size": it.get("size", 0),
-                             "modificado": (it.get("modified_at") or "")[:10]})
+                             "modificado": (it.get("modified_at") or "")[:10], "sha1": it.get("sha1")})
 
 
 def ficha_oportunidad(pais, carpeta):

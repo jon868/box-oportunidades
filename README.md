@@ -124,6 +124,32 @@ El servidor de descargas lanza cada día `python fichas.py actualizar` a las **0
 - Variables: `ACTUALIZACION=no` la desactiva; `ACTUALIZACION_HORA=03:00`; `ACTUALIZACION_ZONA=Europe/Madrid`.
   Sin `ANTHROPIC_API_KEY` no se programa.
 
+## 7. Fotos de las oportunidades · `fotos.py` (sin IA, coste 0)
+Muchas oportunidades tienen fotos que nunca se copiaron al archivo de fotos que etiquetó `box-etiquetar`
+(y que busca `buscar_fotos`). Este paso cuenta cuántas son y cuánto costaría etiquetarlas, **sin enviar nada a la IA**.
+Compara por la huella SHA1 que Box guarda de cada archivo: la misma foto copiada con otro nombre cuenta como la misma.
+
+Necesita el inventario hecho (`inventario.py box` y `cruzar`). En la consola del servicio:
+```bash
+mkdir -p /app/datos/fotos
+setsid nohup python fotos.py todo > /app/datos/fotos/log_fotos.txt 2>&1 < /dev/null &
+tail -f /app/datos/fotos/log_fotos.txt
+```
+1. `archivo`: lista el archivo de fotos con su SHA1 (`FOTOS_CARPETAS`, por defecto las tres tandas del etiquetado:
+   `6895313990,379464633435,302472928787`).
+2. `huellas`: pide a Box el SHA1 de las imágenes de cada oportunidad, bajando solo por las carpetas que tienen
+   imágenes y nunca por las personales. Guarda el avance cada 200 oportunidades y reanuda si se corta.
+   A partir de ahora `inventario.py box` ya guarda el SHA1 de cada archivo, así que las carpetas nuevas no hacen falta.
+3. `informe`: genera en `https://<dominio>/fotos/…`
+   - `resumen_fotos.txt`: cuántas hay, cuántas ya están en el archivo, cuántas faltan (por parte, tipo probable,
+     situación y año) y el coste orientativo con Haiku (`COSTE_FOTO`, 0,00045 $ por foto).
+   - `fotos_oportunidades.csv`: una fila por imagen con su estado y enlace a Box.
+   - `fotos_por_oportunidad.csv`: oportunidades ordenadas por fotos pendientes.
+
+Estados de cada imagen: `ya en el archivo de fotos`, `pendiente de etiquetar`, `repetida (ya contada)`,
+`excluida: personal`, `excluida: < 60 KB` (iconos, firmas; `FOTOS_MIN_KB`) y `sin huella`.
+El "tipo probable" (foto de campaña, diseño o mockup, logo, plano…) sale solo de la carpeta y el nombre.
+
 ## Sensibilidad y permisos
 Cada archivo lleva una sensibilidad:
 - **general**: dossier, diseños, fotos, planos, secretaría técnica (SecTec: permisos, rutas, convocatorias), otra documentación…
