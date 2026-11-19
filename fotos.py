@@ -350,13 +350,21 @@ def _leer_csv(p):
         return list(csv.DictReader(fh, delimiter=";"))
 
 
-def _es_de_visitantes(ruta):
-    return any(_contiene_palabra(normal(seg), PALABRAS_VISITANTES) for seg in (ruta or "").split("/") if seg)
+_RX_EXCLUIR = None
 
 
-def _contiene_palabra(texto, palabras):
-    t = f" {texto} "
-    return any(f" {normal(p)}" in t for p in palabras)
+def _motivo_exclusion(ruta, tiene_alta):
+    """Palabra y carpeta por la que se excluye la ruta, o None. Palabra completa (admite plural), para que
+    'sent' no salte en 'sentados'. 'Baja calidad' solo se excluye si la oportunidad tiene también 'Alta calidad'."""
+    global _RX_EXCLUIR
+    if _RX_EXCLUIR is None:
+        alternativas = "|".join(sorted((re.escape(normal(p)) for p in PALABRAS_VISITANTES), key=len, reverse=True))
+        _RX_EXCLUIR = re.compile(rf"(?:^| )({alternativas})(?:e?s)?(?= |$)")
+    for seg in (ruta or "").split("/"):
+        m = _RX_EXCLUIR.search(normal(seg))
+        if m and not (m.group(1) == "baja calidad" and not tiene_alta):
+            return m.group(1), seg
+    return None
 
 
 def _elegir(candidatas, cupo):
@@ -390,15 +398,17 @@ def cmd_seleccionar(args):
     ya = Counter(f["oportunidad_id"] for f in filas if f["estado"] == "ya en el archivo de fotos")
     pend = [f for f in filas if f["estado"] == "pendiente de etiquetar"]
 
+    con_alta = {f["oportunidad_id"] for f in filas if "alta calidad" in normal(f["ruta"])}
     descartes = Counter()
     carpetas_visit = Counter()
     candidatas = defaultdict(list)
     for f in pend:
+        motivo = None
         if f["tipo_probable"] not in TIPOS_FOTO and not (args.con_propuesta and f["parte"] == "propuesta"):
             descartes[f"no es foto de campaña ({f['tipo_probable']})"] += 1
-        elif _es_de_visitantes(f["ruta"]):
+        elif (motivo := _motivo_exclusion(f["ruta"], f["oportunidad_id"] in con_alta)):
             descartes["carpeta excluida (visitantes, memes, baja calidad…)"] += 1
-            carpetas_visit[f["ruta"].split("/")[-1][:50]] += 1
+            carpetas_visit[(motivo[0], motivo[1][:40], f["oportunidad"][:35])] += 1
         else:
             candidatas[f["oportunidad_id"]].append(f)
 
@@ -435,9 +445,9 @@ def cmd_seleccionar(args):
     L += ["", "Por año:"]
     for k, v in sorted(Counter(str(f["anio"] or "(sin año)") for f in elegidas).items()):
         L.append(f"  {v:7d}  {k}")
-    L += ["", "Carpetas excluidas (las 30 con más fotos; revisa que no haya fotos de campaña):"]
-    for k, v in carpetas_visit.most_common(30):
-        L.append(f"  {v:7d}  {k}")
+    L += ["", "Carpetas excluidas (las 40 con más fotos: palabra que la excluye, carpeta y oportunidad):"]
+    for (palabra, carpeta, op), v in carpetas_visit.most_common(40):
+        L.append(f"  {v:7d}  '{palabra}' en «{carpeta}» · {op}")
     nombres = Counter(f["ruta"].split("/")[-1][:50] for l in candidatas.values() for f in l)
     L += ["", "Carpetas candidatas más grandes (las 30; si alguna es de visitantes, añádela a FOTOS_EXCLUIR_CARPETAS):"]
     for k, v in nombres.most_common(30):
