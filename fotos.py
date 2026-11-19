@@ -315,12 +315,14 @@ def _resumen(filas, por_op, arch):
 
 
 # ---------------------------------------------------------------- 4. selección con tope (sin IA)
-# Carpetas de fotos de los visitantes, no de la campaña: no se etiquetan (cantidad enorme, gente anónima, menores)
+# Carpetas que no se etiquetan: fotos de los visitantes (cantidad enorme, gente anónima, menores), memes, fondos
+# y "Baja calidad" (copia en peor resolución de "Alta calidad": otro SHA1, la misma foto)
 PALABRAS_VISITANTES = [x.strip() for x in os.getenv(
     "FOTOS_EXCLUIR_CARPETAS",
     "photocall,fotocall,fotomaton,photobooth,selfie,participantes,visitantes,asistentes,usuarios,publico,"
     "ganadores,sorteo,concursantes,alumnos,ninos,colegios,escolares,familias,retratos,polaroid,impresion,"
-    "impresas,photo booth,fotos usuarios,fotos publico").split(",") if x.strip()]
+    "impresas,photo booth,fotos usuarios,fotos publico,memes,meme,campeones,sent,baja calidad,"
+    "fondos pantalla,fondospantallas").split(",") if x.strip()]
 TIPOS_FOTO = {"foto de campaña", "foto (otra carpeta del proyecto)"}
 SELECCION_CSV = DIR_FOTOS / "seleccion_fotos.csv"
 SELECCION_TXT = DIR_FOTOS / "seleccion_fotos.txt"
@@ -395,7 +397,7 @@ def cmd_seleccionar(args):
         if f["tipo_probable"] not in TIPOS_FOTO and not (args.con_propuesta and f["parte"] == "propuesta"):
             descartes[f"no es foto de campaña ({f['tipo_probable']})"] += 1
         elif _es_de_visitantes(f["ruta"]):
-            descartes["carpeta de visitantes (photocall, participantes…)"] += 1
+            descartes["carpeta excluida (visitantes, memes, baja calidad…)"] += 1
             carpetas_visit[f["ruta"].split("/")[-1][:50]] += 1
         else:
             candidatas[f["oportunidad_id"]].append(f)
@@ -433,7 +435,7 @@ def cmd_seleccionar(args):
     L += ["", "Por año:"]
     for k, v in sorted(Counter(str(f["anio"] or "(sin año)") for f in elegidas).items()):
         L.append(f"  {v:7d}  {k}")
-    L += ["", "Carpetas de visitantes descartadas (las 30 con más fotos; revisa que no haya fotos de campaña):"]
+    L += ["", "Carpetas excluidas (las 30 con más fotos; revisa que no haya fotos de campaña):"]
     for k, v in carpetas_visit.most_common(30):
         L.append(f"  {v:7d}  {k}")
     nombres = Counter(f["ruta"].split("/")[-1][:50] for l in candidatas.values() for f in l)
