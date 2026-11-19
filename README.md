@@ -150,6 +150,16 @@ Estados de cada imagen: `ya en el archivo de fotos`, `pendiente de etiquetar`, `
 `excluida: personal`, `excluida: < 60 KB` (iconos, firmas; `FOTOS_MIN_KB`) y `sin huella`.
 El "tipo probable" (foto de campaña, diseño o mockup, logo, plano…) sale solo de la carpeta y el nombre.
 
+### Selección con tope · `python fotos.py seleccionar` (sin IA)
+Etiquetar todo lo pendiente no compensa (son cientos de miles, muchas de photocall o ráfagas). Este paso elige qué
+fotos se etiquetarán, sin enviar nada a la IA:
+- Solo fotos de campaña (fuera mockups, planos, logos e imágenes de propuesta; `--con-propuesta` las incluye).
+- Fuera las carpetas de visitantes (photocall, participantes, colegios…). Lista en `FOTOS_EXCLUIR_CARPETAS`.
+- Como mucho `--tope` fotos por oportunidad (50). Si ya tiene fotos en el archivo, el tope menos esas, con un mínimo
+  de `--minimo` (10). Se reparten entre subcarpetas y a lo largo de cada una, para no coger una ráfaga entera.
+- Genera `seleccion_fotos.txt` (resumen, coste con otros topes, carpetas descartadas y candidatas más grandes para
+  revisar) y `seleccion_fotos.csv` (una fila por foto elegida).
+
 ## Sensibilidad y permisos
 Cada archivo lleva una sensibilidad:
 - **general**: dossier, diseños, fotos, planos, secretaría técnica (SecTec: permisos, rutas, convocatorias), otra documentación…

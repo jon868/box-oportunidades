@@ -314,6 +314,137 @@ def _resumen(filas, por_op, arch):
     RESUMEN.write_text("\n".join(L) + "\n", "utf-8")
 
 
+# ---------------------------------------------------------------- 4. selección con tope (sin IA)
+# Carpetas de fotos de los visitantes, no de la campaña: no se etiquetan (cantidad enorme, gente anónima, menores)
+PALABRAS_VISITANTES = [x.strip() for x in os.getenv(
+    "FOTOS_EXCLUIR_CARPETAS",
+    "photocall,fotocall,fotomaton,photobooth,selfie,participantes,visitantes,asistentes,usuarios,publico,"
+    "ganadores,sorteo,concursantes,alumnos,ninos,colegios,escolares,familias,retratos,polaroid,impresion,"
+    "impresas,photo booth,fotos usuarios,fotos publico").split(",") if x.strip()]
+TIPOS_FOTO = {"foto de campaña", "foto (otra carpeta del proyecto)"}
+SELECCION_CSV = DIR_FOTOS / "seleccion_fotos.csv"
+SELECCION_TXT = DIR_FOTOS / "seleccion_fotos.txt"
+
+
+def _orden_repartido(n):
+    """Índices 0..n-1 en orden 'repartido' (0, n/2, n/4, 3n/4…): coger los k primeros da k fotos espaciadas
+    a lo largo de la carpeta, no las k primeras de una ráfaga."""
+    vistos, salida, paso = set(), [], 1
+    while len(salida) < n:
+        for j in range(paso):
+            i = int((2 * j + 1) * n / (2 * paso)) if paso > 1 else 0
+            if i < n and i not in vistos:
+                vistos.add(i)
+                salida.append(i)
+        paso *= 2
+        if paso > 2 * n:
+            salida += [i for i in range(n) if i not in vistos]
+            break
+    return salida
+
+
+def _leer_csv(p):
+    with p.open(encoding="utf-8-sig", newline="") as fh:
+        return list(csv.DictReader(fh, delimiter=";"))
+
+
+def _es_de_visitantes(ruta):
+    return any(_contiene_palabra(normal(seg), PALABRAS_VISITANTES) for seg in (ruta or "").split("/") if seg)
+
+
+def _contiene_palabra(texto, palabras):
+    t = f" {texto} "
+    return any(f" {normal(p)}" in t for p in palabras)
+
+
+def _elegir(candidatas, cupo):
+    """Hasta 'cupo' fotos, repartidas entre subcarpetas (por turnos) y a lo largo de cada subcarpeta."""
+    if cupo <= 0:
+        return []
+    por_dir = defaultdict(list)
+    for f in candidatas:
+        por_dir[f["ruta"]].append(f)
+    colas = []
+    for ruta in sorted(por_dir, key=lambda r: -len(por_dir[r])):
+        lista = sorted(por_dir[ruta], key=lambda f: f["nombre"])
+        colas.append([lista[i] for i in _orden_repartido(len(lista))])
+    elegidas = []
+    while len(elegidas) < cupo and any(colas):
+        for c in colas:
+            if c and len(elegidas) < cupo:
+                elegidas.append(c.pop(0))
+    return elegidas
+
+
+def _cupo(tope, minimo, ya_en_archivo):
+    """Las oportunidades que ya tienen fotos en el archivo necesitan menos: tope menos lo que ya hay, con un mínimo."""
+    return tope if not ya_en_archivo else max(minimo, tope - ya_en_archivo)
+
+
+def cmd_seleccionar(args):
+    if not CSV_FOTOS.exists():
+        sys.exit("Falta fotos_oportunidades.csv: ejecuta antes 'python fotos.py informe'.")
+    filas = _leer_csv(CSV_FOTOS)
+    ya = Counter(f["oportunidad_id"] for f in filas if f["estado"] == "ya en el archivo de fotos")
+    pend = [f for f in filas if f["estado"] == "pendiente de etiquetar"]
+
+    descartes = Counter()
+    carpetas_visit = Counter()
+    candidatas = defaultdict(list)
+    for f in pend:
+        if f["tipo_probable"] not in TIPOS_FOTO and not (args.con_propuesta and f["parte"] == "propuesta"):
+            descartes[f"no es foto de campaña ({f['tipo_probable']})"] += 1
+        elif _es_de_visitantes(f["ruta"]):
+            descartes["carpeta de visitantes (photocall, participantes…)"] += 1
+            carpetas_visit[f["ruta"].split("/")[-1][:50]] += 1
+        else:
+            candidatas[f["oportunidad_id"]].append(f)
+
+    elegidas = []
+    for op_id, lista in candidatas.items():
+        elegidas += _elegir(lista, _cupo(args.tope, args.minimo, ya[op_id]))
+
+    # Simulación con otros topes, para decidir
+    sim = []
+    for t in sorted({10, 20, 30, 50, 80, 100, args.tope}):
+        n = sum(min(len(l), _cupo(t, min(args.minimo, t), ya[o])) for o, l in candidatas.items())
+        sim.append((t, n))
+
+    campos = ["oportunidad_id", "oportunidad", "cliente", "anio", "situacion", "parte", "categoria", "ruta",
+              "nombre", "file_id", "sha1", "kb", "tipo_probable", "enlace_box"]
+    _csv(SELECCION_CSV, [{k: f.get(k, "") for k in campos} for f in elegidas])
+
+    total_cand = sum(len(l) for l in candidatas.values())
+    L = [f"SELECCIÓN DE FOTOS A ETIQUETAR · {ahora()} UTC", "",
+         f"Pendientes de etiquetar: {len(pend)}",
+         "Descartadas antes de elegir:"]
+    for k, v in descartes.most_common():
+        L.append(f"  {v:7d}  {k}")
+    L += [f"Candidatas (fotos de campaña): {total_cand} en {len(candidatas)} oportunidades", "",
+          f"SELECCIONADAS con tope {args.tope} por oportunidad (mínimo {args.minimo} si ya hay fotos en el archivo): "
+          f"{len(elegidas)}",
+          f"  coste orientativo con Haiku: ≈ {len(elegidas) * COSTE_FOTO:.2f} $", "",
+          "Con otros topes:"]
+    for t, n in sim:
+        L.append(f"  tope {t:4d}: {n:7d} fotos · ≈ {n * COSTE_FOTO:6.2f} $")
+    L += ["", "Por situación:"]
+    for k, v in Counter(f["situacion"] or "(sin dato)" for f in elegidas).most_common():
+        L.append(f"  {v:7d}  {k}")
+    L += ["", "Por año:"]
+    for k, v in sorted(Counter(str(f["anio"] or "(sin año)") for f in elegidas).items()):
+        L.append(f"  {v:7d}  {k}")
+    L += ["", "Carpetas de visitantes descartadas (las 30 con más fotos; revisa que no haya fotos de campaña):"]
+    for k, v in carpetas_visit.most_common(30):
+        L.append(f"  {v:7d}  {k}")
+    nombres = Counter(f["ruta"].split("/")[-1][:50] for l in candidatas.values() for f in l)
+    L += ["", "Carpetas candidatas más grandes (las 30; si alguna es de visitantes, añádela a FOTOS_EXCLUIR_CARPETAS):"]
+    for k, v in nombres.most_common(30):
+        L.append(f"  {v:7d}  {k}")
+    L += ["", "Detalle: seleccion_fotos.csv (una fila por foto elegida).", "No se ha enviado nada a la IA."]
+    SELECCION_TXT.write_text("\n".join(L) + "\n", "utf-8")
+    print(SELECCION_TXT.read_text("utf-8"))
+
+
 def cmd_todo(args):
     if args.forzar or not ARCHIVO_JSON.exists():
         cmd_archivo(args)
@@ -323,11 +454,18 @@ def cmd_todo(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("orden", choices=["archivo", "huellas", "informe", "todo"])
+    ap.add_argument("orden", choices=["archivo", "huellas", "informe", "todo", "seleccionar"])
     ap.add_argument("--forzar", action="store_true", help="vuelve a leerlo todo de Box")
+    ap.add_argument("--tope", type=int, default=int(os.getenv("FOTOS_TOPE", "50")),
+                    help="seleccionar: máximo de fotos por oportunidad (50)")
+    ap.add_argument("--minimo", type=int, default=int(os.getenv("FOTOS_MINIMO", "10")),
+                    help="seleccionar: fotos aunque la oportunidad ya tenga muchas en el archivo (10)")
+    ap.add_argument("--con-propuesta", action="store_true",
+                    help="seleccionar: incluye también las imágenes de la propuesta comercial")
     args = ap.parse_args()
     DIR_FOTOS.mkdir(parents=True, exist_ok=True)
-    {"archivo": cmd_archivo, "huellas": cmd_huellas, "informe": cmd_informe, "todo": cmd_todo}[args.orden](args)
+    {"archivo": cmd_archivo, "huellas": cmd_huellas, "informe": cmd_informe, "todo": cmd_todo,
+     "seleccionar": cmd_seleccionar}[args.orden](args)
 
 
 if __name__ == "__main__":
