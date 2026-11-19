@@ -44,7 +44,9 @@ TIPOS = {"resumen.txt": "text/plain; charset=utf-8",
          "resumen_fotos.txt": "text/plain; charset=utf-8",
          "fotos_oportunidades.csv": "text/csv; charset=utf-8",
          "fotos_por_oportunidad.csv": "text/csv; charset=utf-8",
-         "log_fotos.txt": "text/plain; charset=utf-8"}
+         "log_fotos.txt": "text/plain; charset=utf-8",
+         "seleccion_fotos.txt": "text/plain; charset=utf-8",
+         "seleccion_fotos.csv": "text/csv; charset=utf-8"}
 
 
 def disponibles():
