@@ -159,6 +159,9 @@ fotos se etiquetarán, sin enviar nada a la IA:
   de `--minimo` (10). Se reparten entre subcarpetas y a lo largo de cada una, para no coger una ráfaga entera.
 - Genera `seleccion_fotos.txt` (resumen, coste con otros topes, carpetas descartadas y candidatas más grandes para
   revisar) y `seleccion_fotos.csv` (una fila por foto elegida).
+- Ciudades: cada carpeta con nombre de lugar (lista en `ciudades.py`, ampliable con `FOTOS_CIUDADES_EXTRA`) recibe
+  `--por-ciudad` fotos (10) además del tope, para que se puedan buscar fotos de cualquier parada de una gira larga.
+  La ciudad se guarda en la columna `ciudad`: la IA no puede saberla mirando la foto.
 
 ## Sensibilidad y permisos
 Cada archivo lleva una sensibilidad:

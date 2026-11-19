@@ -4,7 +4,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY inventario.py fichas.py fotos.py servidor.py ./
+COPY inventario.py fichas.py fotos.py ciudades.py servidor.py ./
 
 ENV PYTHONUNBUFFERED=1 \
     DATA_DIR=/app/datos \

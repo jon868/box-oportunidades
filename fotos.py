@@ -29,6 +29,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from ciudades import CIUDADES
 from inventario import (BOX_JSON, DATA, DIR_CARPETAS, HILOS, INV_JSON, ahora, box_get, escribir_json, leer_json,
                         normal)
 
@@ -386,6 +387,46 @@ def _elegir(candidatas, cupo):
     return elegidas
 
 
+_RX_CIUDAD = None
+_CIUDAD_RUTA = {}
+
+
+def ciudad_de(ruta):
+    """Primera carpeta de la ruta (de arriba abajo) que lleva nombre de ciudad, o ''. 'MADRID RÍO' → 'Madrid'."""
+    global _RX_CIUDAD
+    if ruta in _CIUDAD_RUTA:
+        return _CIUDAD_RUTA[ruta]
+    if _RX_CIUDAD is None:
+        _RX_CIUDAD = re.compile(rf"(?:^| )({'|'.join(re.escape(c) for c in CIUDADES)})(?= |$)")
+    encontrada = ""
+    for seg in (ruta or "").split("/"):
+        m = _RX_CIUDAD.search(normal(seg))
+        if m:
+            encontrada = m.group(1).title()
+            break
+    _CIUDAD_RUTA[ruta] = encontrada
+    return encontrada
+
+
+def _seleccion(candidatas, ya, tope, minimo, por_ciudad):
+    """Por oportunidad: hasta 'por_ciudad' fotos de cada ciudad (sin tope) y el resto, hasta el cupo general."""
+    elegidas, de_ciudad = [], 0
+    for op_id, lista in candidatas.items():
+        por_c = defaultdict(list)
+        for f in lista:
+            por_c[f["ciudad"]].append(f)
+        cogidas = []
+        for c, fs in por_c.items():
+            if c:
+                cogidas += _elegir(fs, por_ciudad)
+        de_ciudad += len(cogidas)
+        ids = {f["file_id"] for f in cogidas}
+        resto = [f for f in lista if f["file_id"] not in ids]
+        cogidas += _elegir(resto, max(0, _cupo(tope, minimo, ya[op_id]) - len(cogidas)))
+        elegidas += cogidas
+    return elegidas, de_ciudad
+
+
 def _cupo(tope, minimo, ya_en_archivo):
     """Las oportunidades que ya tienen fotos en el archivo necesitan menos: tope menos lo que ya hay, con un mínimo."""
     return tope if not ya_en_archivo else max(minimo, tope - ya_en_archivo)
@@ -410,19 +451,17 @@ def cmd_seleccionar(args):
             descartes["carpeta excluida (visitantes, memes, baja calidad…)"] += 1
             carpetas_visit[(motivo[0], motivo[1][:40], f["oportunidad"][:35])] += 1
         else:
+            f["ciudad"] = ciudad_de(f["ruta"])
             candidatas[f["oportunidad_id"]].append(f)
 
-    elegidas = []
-    for op_id, lista in candidatas.items():
-        elegidas += _elegir(lista, _cupo(args.tope, args.minimo, ya[op_id]))
+    elegidas, de_ciudad = _seleccion(candidatas, ya, args.tope, args.minimo, args.por_ciudad)
 
     # Simulación con otros topes, para decidir
     sim = []
     for t in sorted({10, 20, 30, 50, 80, 100, args.tope}):
-        n = sum(min(len(l), _cupo(t, min(args.minimo, t), ya[o])) for o, l in candidatas.items())
-        sim.append((t, n))
+        sim.append((t, len(_seleccion(candidatas, ya, t, min(args.minimo, t), args.por_ciudad)[0])))
 
-    campos = ["oportunidad_id", "oportunidad", "cliente", "anio", "situacion", "parte", "categoria", "ruta",
+    campos = ["oportunidad_id", "oportunidad", "cliente", "anio", "situacion", "ciudad", "parte", "categoria", "ruta",
               "nombre", "file_id", "sha1", "kb", "tipo_probable", "enlace_box"]
     _csv(SELECCION_CSV, [{k: f.get(k, "") for k in campos} for f in elegidas])
 
@@ -435,8 +474,9 @@ def cmd_seleccionar(args):
     L += [f"Candidatas (fotos de campaña): {total_cand} en {len(candidatas)} oportunidades", "",
           f"SELECCIONADAS con tope {args.tope} por oportunidad (mínimo {args.minimo} si ya hay fotos en el archivo): "
           f"{len(elegidas)}",
+          f"  de ellas, por ciudad ({args.por_ciudad} por cada ciudad de cada oportunidad, fuera del tope): {de_ciudad}",
           f"  coste orientativo con Haiku: ≈ {len(elegidas) * COSTE_FOTO:.2f} $", "",
-          "Con otros topes:"]
+          f"Con otros topes (las de ciudad siempre incluidas):"]
     for t, n in sim:
         L.append(f"  tope {t:4d}: {n:7d} fotos · ≈ {n * COSTE_FOTO:6.2f} $")
     L += ["", "Por situación:"]
@@ -448,9 +488,13 @@ def cmd_seleccionar(args):
     L += ["", "Carpetas excluidas (las 40 con más fotos: palabra que la excluye, carpeta y oportunidad):"]
     for (palabra, carpeta, op), v in carpetas_visit.most_common(40):
         L.append(f"  {v:7d}  '{palabra}' en «{carpeta}» · {op}")
-    nombres = Counter(f["ruta"].split("/")[-1][:50] for l in candidatas.values() for f in l)
-    L += ["", "Carpetas candidatas más grandes (las 30; si alguna es de visitantes, añádela a FOTOS_EXCLUIR_CARPETAS):"]
-    for k, v in nombres.most_common(30):
+    ciud = Counter(f["ciudad"] for f in elegidas if f["ciudad"])
+    L += ["", f"Ciudades detectadas: {len(ciud)} (fotos seleccionadas de cada una; las 40 primeras):"]
+    L += ["  " + " · ".join(f"{c} {n}" for c, n in ciud.most_common(40))]
+    nombres = Counter(f["ruta"].split("/")[-1][:50] for l in candidatas.values() for f in l if not f["ciudad"])
+    L += ["", "Carpetas candidatas más grandes SIN ciudad (las 40; si alguna es un lugar, añádelo a FOTOS_CIUDADES_EXTRA;",
+          "si es de visitantes, a FOTOS_EXCLUIR_CARPETAS):"]
+    for k, v in nombres.most_common(40):
         L.append(f"  {v:7d}  {k}")
     L += ["", "Detalle: seleccion_fotos.csv (una fila por foto elegida).", "No se ha enviado nada a la IA."]
     SELECCION_TXT.write_text("\n".join(L) + "\n", "utf-8")
@@ -472,6 +516,8 @@ def main():
                     help="seleccionar: máximo de fotos por oportunidad (50)")
     ap.add_argument("--minimo", type=int, default=int(os.getenv("FOTOS_MINIMO", "10")),
                     help="seleccionar: fotos aunque la oportunidad ya tenga muchas en el archivo (10)")
+    ap.add_argument("--por-ciudad", type=int, default=int(os.getenv("FOTOS_POR_CIUDAD", "10")),
+                    help="seleccionar: fotos de cada carpeta de ciudad, además del tope (10)")
     ap.add_argument("--con-propuesta", action="store_true",
                     help="seleccionar: incluye también las imágenes de la propuesta comercial")
     args = ap.parse_args()
