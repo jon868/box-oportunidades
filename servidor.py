@@ -40,7 +40,11 @@ TIPOS = {"resumen.txt": "text/plain; charset=utf-8",
          "indice_oportunidades.json": "application/json; charset=utf-8",
          "log.txt": "text/plain; charset=utf-8",
          "log_todo.txt": "text/plain; charset=utf-8",
-         "log_nocturno.txt": "text/plain; charset=utf-8"}
+         "log_nocturno.txt": "text/plain; charset=utf-8",
+         "resumen_fotos.txt": "text/plain; charset=utf-8",
+         "fotos_oportunidades.csv": "text/csv; charset=utf-8",
+         "fotos_por_oportunidad.csv": "text/csv; charset=utf-8",
+         "log_fotos.txt": "text/plain; charset=utf-8"}
 
 
 def disponibles():
