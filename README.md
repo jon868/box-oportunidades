@@ -150,6 +150,10 @@ Estados de cada imagen: `ya en el archivo de fotos`, `pendiente de etiquetar`, `
 `excluida: personal`, `excluida: < 60 KB` (iconos, firmas; `FOTOS_MIN_KB`) y `sin huella`.
 El "tipo probable" (foto de campaña, diseño o mockup, logo, plano…) sale solo de la carpeta y el nombre.
 
+### Cada noche
+La actualización de las 03:00 rehace también `fotos.py archivo`, `huellas`, `informe` y `seleccionar`
+(`FOTOS_NOCTURNO=no` lo desactiva). El etiquetado nocturno de box-etiquetar (05:30) descarga `seleccion_fotos.csv`.
+
 ### Selección con tope · `python fotos.py seleccionar` (sin IA)
 Etiquetar todo lo pendiente no compensa (son cientos de miles, muchas de photocall o ráfagas). Este paso elige qué
 fotos se etiquetarán, sin enviar nada a la IA:

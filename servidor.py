@@ -7,6 +7,8 @@ Solo sirve los archivos de TIPOS; nunca los JSON de trabajo ni el .env.
 Además lanza cada noche la actualización incremental (python fichas.py actualizar) a la hora de
 ACTUALIZACION_HORA (por defecto 03:00, hora de ACTUALIZACION_ZONA, Europe/Madrid). Se desactiva con
 ACTUALIZACION=no. El resultado queda en datos/fichas/log_nocturno.txt.
+Después rehace la selección de fotos de las oportunidades (fotos.py archivo, huellas, informe y seleccionar), que el
+etiquetado nocturno de box-etiquetar descarga más tarde. Se desactiva con FOTOS_NOCTURNO=no.
 """
 import base64
 import hmac
@@ -123,8 +125,15 @@ def programador():
                 with LOG_NOCHE.open("a", encoding="utf-8") as log:
                     log.write(f"\n--- lanzada {ahora:%Y-%m-%d %H:%M} ({ZONA.key}) ---\n")
                     log.flush()
-                    subprocess.run([sys.executable, "fichas.py", "actualizar"], stdout=log, stderr=subprocess.STDOUT,
-                                   cwd=Path(__file__).parent, check=False)
+                    pasos = [["fichas.py", "actualizar"]]
+                    if os.getenv("FOTOS_NOCTURNO", "si").lower() not in ("no", "0", "false"):
+                        pasos += [["fotos.py", "archivo"], ["fotos.py", "huellas"], ["fotos.py", "informe"],
+                                  ["fotos.py", "seleccionar"]]
+                    for paso in pasos:
+                        log.write(f"\n--- {' '.join(paso)} · {datetime.now(ZONA):%H:%M} ---\n")
+                        log.flush()
+                        subprocess.run([sys.executable, *paso], stdout=log, stderr=subprocess.STDOUT,
+                                       cwd=Path(__file__).parent, check=False)
         except Exception as e:  # noqa: BLE001 — el programador no debe tumbar el servidor
             print(f"[actualización] error: {e}", flush=True)
         time.sleep(30)
