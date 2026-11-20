@@ -323,7 +323,8 @@ PALABRAS_VISITANTES = [x.strip() for x in os.getenv(
     "photocall,fotocall,fotomaton,photobooth,selfie,participantes,visitantes,asistentes,usuarios,publico,"
     "ganadores,sorteo,concursantes,alumnos,ninos,colegios,escolares,familias,retratos,polaroid,impresion,"
     "impresas,photo booth,fotos usuarios,fotos publico,memes,meme,campeones,sent,baja calidad,"
-    "fondos pantalla,fondospantallas").split(",") if x.strip()]
+    "fondos pantalla,fondospantallas,prensa,alojamiento,alojamientos,hotel,hoteles,vuelos,billetes,reservas,"
+    "facturas,contactos,logistica").split(",") if x.strip()]
 TIPOS_FOTO = {"foto de campaña", "foto (otra carpeta del proyecto)"}
 SELECCION_CSV = DIR_FOTOS / "seleccion_fotos.csv"
 SELECCION_TXT = DIR_FOTOS / "seleccion_fotos.txt"
@@ -392,14 +393,15 @@ _CIUDAD_RUTA = {}
 
 
 def ciudad_de(ruta):
-    """Primera carpeta de la ruta (de arriba abajo) que lleva nombre de ciudad, o ''. 'MADRID RÍO' → 'Madrid'."""
+    """La carpeta más profunda de la ruta que lleva nombre de lugar, o ''. 'Araba/Llodio' → 'Llodio';
+    'MADRID RÍO' → 'Madrid'."""
     global _RX_CIUDAD
     if ruta in _CIUDAD_RUTA:
         return _CIUDAD_RUTA[ruta]
     if _RX_CIUDAD is None:
         _RX_CIUDAD = re.compile(rf"(?:^| )({'|'.join(re.escape(c) for c in CIUDADES)})(?= |$)")
     encontrada = ""
-    for seg in (ruta or "").split("/"):
+    for seg in reversed((ruta or "").split("/")):
         m = _RX_CIUDAD.search(normal(seg))
         if m:
             encontrada = m.group(1).title()
