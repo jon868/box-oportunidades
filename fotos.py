@@ -324,7 +324,7 @@ PALABRAS_VISITANTES = [x.strip() for x in os.getenv(
     "ganadores,sorteo,concursantes,alumnos,ninos,colegios,escolares,familias,retratos,polaroid,impresion,"
     "impresas,photo booth,fotos usuarios,fotos publico,memes,meme,campeones,sent,baja calidad,"
     "fondos pantalla,fondospantallas,prensa,alojamiento,alojamientos,hotel,hoteles,vuelos,billetes,reservas,"
-    "facturas,contactos,logistica").split(",") if x.strip()]
+    "facturas,contactos").split(",") if x.strip()]
 TIPOS_FOTO = {"foto de campaña", "foto (otra carpeta del proyecto)"}
 SELECCION_CSV = DIR_FOTOS / "seleccion_fotos.csv"
 SELECCION_TXT = DIR_FOTOS / "seleccion_fotos.txt"
